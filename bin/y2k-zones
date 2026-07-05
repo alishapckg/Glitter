@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Y2K Zones v2.3 - Final Clean Version
-All bugs fixed: brush drawing, tracking, UI, syntax errors
+Y2K Zones - Minimal Working Version
+Only Blur Zone for testing
 """
 
 import sys
@@ -9,7 +9,6 @@ import os
 import argparse
 import subprocess
 import shutil
-import math
 import random
 from pathlib import Path
 
@@ -17,476 +16,402 @@ import cv2
 import numpy as np
 
 
-# Auto-install dependencies on first run
-def ensure_deps():
-    missing = []
+# Auto-install
+def check_deps():
     try:
-        import cv2
+        import cv2; import numpy
     except ImportError:
-        missing.append('opencv-python-headless')
-    try:
-        import numpy
-    except ImportError:
-        missing.append('numpy')
-    
-    if missing:
-        print("\n🎀 Y2K Zones - First Run Setup")
-        print("=" * 40)
-        print(f"\n⚠ Missing: {', '.join(missing)}")
-        resp = input("\nInstall automatically? [Y/n]: ").strip().lower()
-        if resp in ['y', 'yes', '']:
-            print(f"\nInstalling...")
-            subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--user'] + missing)
-            print("✓ Done! Restarting...\n")
-            os.execl(sys.executable, sys.executable, *sys.argv)
-        else:
-            print(f"\n✗ Please run: pip3 install {' '.join(missing)}")
-            sys.exit(1)
+        print("Installing dependencies...")
+        os.system(f"{sys.executable} -m pip install opencv-python numpy --user")
+        print("Restarting..."); os.execl(sys.executable, sys.executable, *sys.argv)
 
-ensure_deps()
+check_deps()
+import cv2; import numpy as np
 
 
-# Colors
-class C:
-    BG = (25, 20, 35)
-    PANEL = (35, 28, 45)
-    W = (255, 255, 255)
-    WS = (200, 195, 210)
-    WD = (140, 135, 155)
-    PK = (255, 105, 180)
-    PKS = (255, 182, 193)
-    LV = (200, 160, 220)
-    MT = (152, 255, 200)
-    GD = (255, 215, 100)
-    CN = (150, 230, 255)
-    ON = (70, 65, 85)
-    OK = (100, 255, 150)
-    TK = (50, 255, 150)
-    FP = (255, 150, 180)
-    FL = (220, 160, 240)
-    FE = (100, 230, 160)
-    FC = (150, 215, 255)
-    FG = (255, 200, 120)
-
-
-# Config
-class CFG:
-    GMIN=1; GMAX=4; GSTAR=True; GDENS=0.02
-    BMIN=5; BMAX=31
-    DGR=0.03; DDS=0.3; DVN=0.6
-
-
-# Button
-class Btn:
-    def __init__(s,x,y,w,h,t,tog=False):
-        s.x=s.x; s.y=y; s.w=w; s.h=h; s.t=t; s.tog=tog; s.on=False; s.hv=False
-    def c(s,p):
-        return s.x<=p<=s.x+s.w and s.y<=p<=s.y+s.h
-    def draw(s,cv):
-        bg=s.PK if(s.tog and s.on)else(s.ON if not s.tog and s.hv else(60,53,73))
-        cv.rectangle(cv,(s.x,s.y),(s.x+s.w,s.y+s.h),bg,-1)
-        bd=s.PKS if(s.tog and s.on)or(not s.tog and s.hv)else s.ON
-        cv.rectangle(cv,(s.x,s.y),(s.x+s.w,s.y+s.h),bd,2)
-        lb=f"✓ {s.t}"if(s.tog and s.on)else s.t
-        tw,th=cv2.getTextSize(lb,cv2.FONT_HERSHEY_SIMPLEX,0.42,1)[0]
-        cv.putText(cv,lb,(s.x+(s.w-tw)//2,s.y+(s.h+th)//2),cv2.FONT_HERSHEY_SIMPLEX,0.42,s.W,1)
-
-
-# Slider
-class Sld:
-    def __init__(s,x,y,w,mn,mx,v,l,u=''):
-        s.x=x;s.y=y;s.w=w;s.h=24;s.mn=mn;s.mx=mx;s.v=v;s.l=l;s.u=u;s.dg=False;s.r=10;s.hv=False
-    @property
-    def hx(s):
-        return int(s.x+(s.v-s.mn)/(s.mx-s.mn)*s.w)
-    def ct(s,p):
-        return s.x-5<=p<=s.x+s.w+5 and s.y-5<=p<=s.y+s.h+5
-    def sp(s,p):
-        r=max(0,min(1,(p-s.x)/s.w));s.v=s.mn+r*(s.mx-s.mn)
-    def draw(s,c):
-        cy=s.y+s.h//2
-        cv.line(c,(s.x,cy-3),(s.x+s.w,cy-3),(50,45,60),6)
-        for i in range(s.hx-s.x):
-            a=i/max(1,s.w);cl=(int(255*a*0.6+180*(1-a)),int(105*a+75*(1-a)),int(180*a+150*(1-a)))
-            cv.line(c,(s.x+i,cy-3),(s.x+i,cy+3),cl,1)
-        hc=s.PK if(s.dg or s.hv)else s.PKS
-        cv.circle(c,(s.hx,cy),s.r,s.W,-1);cv.circle(c,(s.hx,cy),s.r,hc,2);cv.circle(c,(s.hx,cy),4,hc,-1)
-        cv.putText(c,f"{s.l}: {int(s.v)}{s.u}",(s.x,s.y-8),cv2.FONT_HERSHEY_SIMPLEX,0.42,s.WS,1)
-
-
-# Swatch
-class Sw:
-    def __init__(s,x,y,sz,col,lb,sl=False):
-        s.x=x;s.y=y;s.sz=sz;s.col=col;s.lb=lb;s.sl=sl;s.hv=False
-    def c(s,p):
-        return s.x<=p<=s.x+s.sz and s.y<=p<=s.y+s.sz
-    def draw(s,c):
-        dc=s.col or(80,80,80)
-        cv.rectangle(c,(s.x+2,s.y+2),(s.x+s.sz+2,s.y+s.sz+2),(0,0,0),-1)
-        cv.rectangle(c,(s.x,s.y),(s.x+s.sz,s.y+s.sz),dc,-1)
-        b=s.PK if s.sl else(s.LV if s.hv else s.ON);t=3 if s.sl else 1
-        cv.rectangle(c,(s.x,s.y),(s.x+s.sz,s.y+s.sz),b,t)
-        tw,th=cv2.getTextSize(s.lb,cv2.FONT_HERSHEY_SIMPLEX,0.36,1)[0]
-        tc=s.W if s.sl else(s.WS if s.hv else s.WD)
-        cv.putText(c,s.lb,(s.x+(s.sz-tw)//2,s.y+s.sz+16),cv2.FONT_HERSHEY_SIMPLEX,0.36,tc,1)
-
-
-# Tracker
-class Trk:
-    def __init__(s):
-        s.tk={};s.en={1:False,2:False,3:False};s.sl=False;s.bs=None;s.bc=None;s_dn={1:False,2:False,3:False};s.st=0
-    def start(s,st):
-        s.sl=True;s.st=st;s.bs=None;s.bc=None
-    def cancel(s):
-        s.sl=False;s.bs=None;s.bc=None
-    def set_bb(s,bb,fr,st,msk):
-        t=cv2.TrackerCSRT_create();t.init(fr,bb)
-        s.tk[st]={'t':t,'bb':bb,'msk':msk.copy(),'orig':bb}
-        s.en[st]=True;s_dn[st]=True;s.sl=False
-    def upd(s,fr,st):
-        if st not in s.tk:return None
-        ok,bb=s.tk[st]['t'].update(fr)
-        if ok:s.tk[st]['bb']=bb;return bb
-        return None
-    def msk(s,fr,st,sh):
-        if not s.en.get(st,False)or st not in s.tk:return None
-        bb=s.upd(fr,st)
-        if bb is None:return s.tk[st]['msk']
-        o=s.tk[st]['orig'];x,y,w,h=[int(v)for v in bb];ox,oy,ow,oh=[int(v)for v in o]
-        sx=(x+w//2)-(ox+ow//2);sy=(y+h//2)-(oy+oh//2)
-        M=np.float32([[1,0,sx],[0,1,sy]])
-        return cv2.warpAffine(s.tk[st]['msk'],M,(sh[1],sh[0]))
-    def box(s,c,st):
-        if st not in s.tk or not s_dn.get(st,False):return
-        bb=s.tk[st].get('bb',s.tk[st].get('orig'))
-        if bb is None:return
-        x,y,w,h=[int(v)for v in bb];cl=s.TK;ln=min(25,w//3,h//3);lw=3
-        cv.line(c,(x,y),(x+ln,y),cl,lw);cv.line(c,(x,y),(x,y+ln),cl,lw)
-        cv.line(c,(x+w,y),(x+w-ln,y),cl,lw);cv.line(c,(x+w,y),(x+w,y+ln),cl,lw)
-        cv.line(c,(x,y+h),(x+ln,y+h),cl,lw);cv.line(c,(x,y+h),(x,y+h-ln),cl,lw)
-        cv.line(c,(x+w,y+h),(x+w-ln,y+h),cl,lw);cv.line(c,(x+w,y+h),(x+w,y+h-ln),cl,lw)
-        lb="TRACKING";tw,th=cv2.getTextSize(lb,cv2.FONT_HERSHEY_SIMPLEX,0.5,2)[0]
-        cv.rectangle(c,(x-2,y-th-12),(x+tw+4,y-2),(0,0,0),-1)
-        cv.putText(c,lb,(x,y-8),cv2.FONT_HERSHEY_SIMPLEX,0.5,cl,2)
-
-
-# Main App
 class App:
-    def __init__(s,inp,out=None):
-        s.inp=Path(inp);s.out=Path(out)if out else s.inp.with_name(f"{s.inp.stem}_y2k.mp4")
-        s.cap=cv2.VideoCapture(str(s.inp))
-        if not s.cap.isOpened():raise ValueError(f"Cannot open:{inp}")
-        s.fps=s.cap.get(cv2.CAP_PROP_FPS);s.tot=int(s.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        s.fw=int(s.cap.get(cv2.CAP_PROP_FRAME_WIDTH));s.fh=int(s.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        ret,s.frame=s.cap.read()
-        if not ret:raise ValueError("Cannot read frame")
-        s.orig=s.frame.copy()
-        s.pw=380;s.cw=s.fw+s.pw;s.ch=max(s.fh,850)
-        s.canvas=np.zeros((s.ch,s.cw,3),dtype=np.uint8);s.canvas[:]=C.BG
-        s.brush=25;s.draw=False;s.last=None;s.mp=(0,0)
-        s.m1=np.zeros((s.fh,s.fw),dtype=np.uint8)
-        s.m2=np.zeros((s.fh,s.fw),dtype=np.uint8)
-        s.m3=np.zeros((s.fh,s.fw),dtype=np.uint8)
-        s.step=1;s.tk=Trk();s.ui();s.win="✨ Y2K Zones Editor"
-
-    def ui(s):
-        px=s.fw+25
-        if s.step==1:
-            s.btn=Btn(px,95,130,38,"Blur Zone",tog=True)
-            s.s1=Sld(px,155,330,1,100,35,"Strength","%")
-            s.bt=Btn(px,200,155,34,"🎯 Track Object")
-            s.bs=Btn(px+165,200,145,34,"📍 Static",tog=True);s.bs.state=True
-            s.sw=[Sw(px+(i%4)*78,250,38,c,l,i==0)for i,(l,c)in enumerate([("None",None),("Pink",C.FP),("Lilac",C.FL),("Mint",C.MT)])]
-            s.cl=None
-        elif s.step==2:
-            s.btn=Btn(px,95,140,38,"✨ Glitter",tog=True)
-            s.s1=Sld(px,155,330,1,100,55,"Density","%");s.s2=Sld(px,205,330,1,100,65,"Glow","%")
-            s.bt=Btn(px,255,155,34,"🎯 Track Object")
-            s.bs=Btn(px+165,255,145,34,"📍 Static",tog=True);s.bs.state=True
-            s.sw=[Sw(px+(i%4)*78,305,38,c or(200,200,200),l,i==0)for i,(l,c)in enumerate([("White",(255,255,255)),("Pink",C.PK),("Gold",C.GD),("Rainbow",None)])]
-            s.cl=s.sw[0].col
-        elif s.step==3:
-            s.btn=Btn(px,95,140,38,"🔮 Frosted Glass",tog=True)
-            s.s1=Sld(px,155,330,1,100,50,"Strength","%");s.s2=Sld(px,205,330,0,100,60,"Transparency","%")
-            s.bt=Btn(px,255,155,34,"🎯 Track Object")
-            s.bs=Btn(px+165,255,145,34,"📍 Static",tog=True);s.bs.state=True
-        elif s.step==4:
-            s.btn=Btn(px,95,160,38,"🎞️ Vintage Dust",tog=True)
-            s.s1=Sld(px,155,330,0,100,40,"Intensity","%")
-        elif s.step==5:
-            opts=[("None",None),("Pink",C.FP),("Lilac",C.FL),("Emerald",C.FE),("Cyan",C.FC),("Gold",C.FG),("Custom",C.PK)]
-            s.sw=[Sw(px+(i%4)*78,110+(i//4)*55,38,c or(100,100,100),l,i==0)for i,(l,c)in enumerate(opts)]
-            s.cl=None;s.s1=Sld(px,235,330,0,100,50,"Strength","%")
-
-    def pbg(s):
-        pr=s.canvas[:,s.fw:]
-        for y in range(s.ch):
-            iv=1-(y/s.ch)*0.15;pr[y,:]=(int(C.PANEL[0]*iv),int(C.PANEL[1]*iv),int(C.PANEL[2]*iv))
-        cv.line(pr,(0,0),(0,s.ch),C.PK,2)
-
-    def hdr(s):
-        px=s.fw+25
-        cv.putText(s.canvas,f"STEP {s.step}",(px,35),cv2.FONT_HERSHEY_SIMPLEX,0.55,C.PK,2)
-        tl={1:"Blur Zone",2:"Glitter Sparkles",3:"Frosted Glass",4:"Vintage Dust",5:"Color Filter"}
-        cv.putText(s.canvas,tl.get(s.step,""),(px,62),cv2.FONT_HERSHEY_SIMPLEX,0.52,C.W,1)
-        for i in range(1,6):
-            dx=px+280+(i-1)*22;c=C.OK if i<s.step else(C.PK if i==s.step else C.ON)
-            cv.putText(s.canvas,str(i),(dx-3,27),cv2.FONT_HERSHEY_SIMPLEX,0.45,c,2)
-
-    def ctrl(s):
-        px=s.fw+25
-        if s.step==1:
-            s.btn.draw(s.canvas)
-            if s.btn.state:
-                s.s1.draw(s.canvas);s.bt.draw(s.canvas);s.bs.draw(s.canvas)
-                [sw.draw(s.canvas)for sw in s.sw]
-                sy=300
-                if s.tk.en[1]:cv.putText(s.canvas,"✓ Tracking ON!",(px,sy),cv2.FONT_HERSHEY_SIMPLEX,0.4,s.TK,1)
-                elif s.bs.state:cv.putText(s.canvas,"○ Static mode",(px,sy),cv2.FONT_HERSHEY_SIMPLEX,0.4,s.WD,1)
-        elif s.step==2:
-            s.btn.draw(s.canvas)
-            if s.btn.state:
-                s.s1.draw(s.canvas);s.s2.draw(s.canvas);s.bt.draw(s.canvas);s.bs.draw(s.canvas)
-                [sw.draw(s.canvas)for sw in s.sw]
-                if s.tk.en[2]:cv.putText(s.canvas,"✓ Tracking ON!",(px,360),cv2.FONT_HERSHEY_SIMPLEX,0.4,s.TK,1)
-        elif s.step==3:
-            s.btn.draw(s.canvas)
-            if s.btn.state:
-                s.s1.draw(s.canvas);s.s2.draw(s.canvas);s.bt.draw(s.canvas);s.bs.draw(s.canvas)
-                if s.tk.en[3]:cv.putText(s.canvas,"✓ Tracking ON!",(px,310),cv2.FONT_HERSHEY_SIMPLEX,0.4,s.TK,1)
-        elif s.step==4:
-            s.btn.draw(s.canvas)
-            if s.btn.state:s.s1.draw(s.canvas)
-        elif s.step==5:
-            [sw.draw(s.canvas)for sw in s.sw];s.s1.draw(s.canvas)
-
-    def instr(s):
-        iy=s.ch-115;px=s.fw+25
-        cv.rectangle(s.canvas,(px-10,iy-15),(px+340,s.ch-10),(30,25,40),-1)
-        ln=[("Controls:",C.PK,0.48)]
-        if s.tk.sl:ln.append(("▸ Draw rectangle around object...",s.TK,0.42))
-        ln+=[("🖱️ Click+drag: Paint mask",C.WS,0.38),("🔄 Scroll: Brush size",C.WS,0.38),("⏎ Enter: Next step",C.WS,0.38),("⎋ ESC: Exit",C.WS,0.38)]
-        for i,(t,c,sc)in enumerate(ln):cv.putText(s.canvas,t,(px,iy+i*20),cv2.FONT_HERSHEY_SIMPLEX,sc,c,1)
-        cv.putText(s.canvas,f"🖌️ Brush: {s.brush}px",(px,s.ch-18),cv2.FONT_HERSHEY_SIMPLEX,0.45,C.GD,1)
-
-    def cur(s):
-        mx,my=s.mp
-        if not(0<=mx<s.fw and 0<=my<s.fh):return
-        ov=s.canvas[:s.fh,:s.fw].copy()
-        cv.circle(ov,(mx,my),s.brush,(255,255,255),1)
-        cv.circle(ov,(mx,my),s.brush,C.PK,2)
-        cs=min(5,s.brush//3)
-        cv.line(ov,(mx-cs,my),(mx+cs,my),(255,255,255),1);cv.line(ov,(mx,my-cs),(mx,my+cs),(255,255,255),1)
-        s.canvas[:s.fh,:s.fw]=cv2.addWeighted(ov,0.3,s.canvas[:s.fh,:s.fw],0.7,0)
-
-    def comp(s):
-        disp=s.frame.copy()
-        if s.step in[1,2,3]:
-            m={1:s.m1,2:s.m2,3:s.m3}[s.step]
-            mc=[50,255,150]if s.tk.en.get(s.step,False)else[255,50,100]
-            ov=disp.copy();ov[m>0]=mc;disp=cv2.addWeighted(disp,0.7,ov,0.3,0)
-            if s.tk.en.get(s.step,False):s.tk.box(disp,s.step)
-        if s.tk.sl and s.tk.bs and s.tk.bc:
-            sx,sy=s.tk.bs;ex,ey=s.tk.bc
-            cv.rectangle(disp,(sx,sy),(ex,ey),s.TK,2)
-            cv.putText(disp,"🎀 Release to confirm",(sx,sy-10),cv2.FONT_HERSHEY_SIMPLEX,0.5,s.TK,2)
-        s.canvas[:s.fh,:s.fw]=disp
-
-    def render(s):
-        s.pbg();s.comp();s.hdr();s.ctrl();s.instr();s.cur()
-        cv.imshow(s.win,s.canvas)
-
-    def paint(s,pt,m):
-        cv.circle(m,pt,s.brush,255,-1)
-        if s.last:
-            th=max(1,s.brush)  # FIX: thickness must be >= 1!
-            cv.line(m,s.last,pt,th,-1)
-        s.last=pt
-
-    def mouse(s,ev,x,y,flags,param):
-        s.mp=(x,y);ov=0<=x<s.fw and 0<=y<s.fh
-        if s.tk.sl:
-            if ov:
-                if ev==cv2.EVENT_LBUTTONDOWN:s.tk.bs=(x,y);s.tk.bc=(x,y)
-                elif ev==cv2.EVENT_MOUSEMOVE and s.tk.bs:s.tk.bc=(x,y)
-                elif ev==cv2.EVENT_LBUTTONUP and s.tk.bs and s.tk.bc:
-                    sx,sy=s.tk.bs;ex,ey=s.tk.bc;bb=(min(sx,ex),min(sy,ey),abs(ex-sx),abs(ey-sy))
-                    if bb[2]>15 and bb[3]>15:
-                        ms={1:s.m1,2:s.m2,3:s.m3}[s.tk.st]
-                        s.tk.set_bb(bb,s.frame,s.tk.st,ms)
-                        print(f"\n  ✓ Tracking ON for Step {s.tk.st}!")
-                    s.tk.cancel()
+    def __init__(self, video_path):
+        self.cap = cv2.VideoCapture(str(video_path))
+        if not self.cap.isOpened():
+            raise ValueError("Cannot open video")
+            
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.total = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        ret, self.frame = self.cap.read()
+        if not ret:
+            raise ValueError("Cannot read frame")
+        
+        # Mask for painting
+        self.mask = np.zeros((self.h, self.w), dtype=np.uint8)
+        
+        # Brush settings
+        self.brush_size = 30
+        self.drawing = False
+        self.last_point = None
+        self.mouse_pos = (0, 0)
+        
+        # Blur settings
+        self.blur_enabled = True
+        self.blur_strength = 30
+        
+        # UI
+        self.panel_w = 300
+        self.canvas_w = self.w + self.panel_w
+        self.canvas_h = max(self.h, 600)
+        self.canvas = np.zeros((self.canvas_h, self.canvas_w, 3), dtype=np.uint8)
+        
+        self.window = "Y2K Zones - Blur Editor"
+        
+    def draw_ui(self):
+        """Draw control panel"""
+        panel = self.canvas[:, self.w:]
+        panel[:] = (35, 28, 45)  # Dark background
+        
+        px = 15
+        
+        # Title
+        cv2.putText(panel, "BLUR ZONE", (px, 35), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 105, 180), 2)
+        
+        # Instructions
+        cv2.putText(panel, "Paint area to blur", (px, 65),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 195, 210), 1)
+        
+        # Brush size
+        cv2.putText(panel, f"Brush: {self.brush_size}px", (px, 100),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 215, 100), 1)
+        
+        # Blur strength slider area
+        cv2.putText(panel, f"Strength: {self.blur_strength}", (px, 140),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 195, 210), 1)
+        
+        # Slider track
+        sx, sy, sw, sh = px, 155, 250, 10
+        cv2.rectangle(panel, (sx, sy), (sx+sw, sy+sh), (70, 65, 85), -1)
+        
+        # Slider fill
+        fill_w = int(sw * self.blur_strength / 100)
+        cv2.rectangle(panel, (sx, sy), (sx+fill_w, sy+sh), (255, 105, 180), -1)
+        
+        # Slider handle
+        hx = sx + fill_w
+        cv2.circle(panel, (hx, sy + sh//2), 8, (255, 255, 255), -1)
+        cv2.circle(panel, (hx, sy + sh//2), 8, (255, 105, 180), 2)
+        
+        # Store slider rect for interaction
+        self.slider_rect = (sx, sy-5, sw, sh+10)
+        self.slider_handle_center = (hx, sy + sh//2)
+        
+        # Status
+        mask_pixels = np.sum(self.mask > 0)
+        cv2.putText(panel, f"Mask: {mask_pixels} px", (px, 200),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 230, 255), 1)
+        
+        # Help at bottom
+        help_y = self.canvas_h - 60
+        cv2.putText(panel, "Controls:", (px, help_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 105, 180), 1)
+        cv2.putText(panel, "• Drag: Paint", (px, help_y+22),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 195, 210), 1)
+        cv2.putText(panel, "• Scroll: Brush size", (px, help_y+42),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 195, 210), 1)
+        cv2.putText(panel, "• Drag slider: Strength", (px, help_y+62),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 195, 210), 1)
+        cv2.putText(panel, "• Enter: Process & Save", (px, help_y+82),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 195, 210), 1)
+        cv2.putText(panel, "• ESC: Exit", (px, help_y+102),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 195, 210), 1)
+    
+    def draw_cursor(self):
+        """Draw brush cursor on video area"""
+        mx, my = self.mouse_pos
+        
+        # Only draw if over video
+        if not (0 <= mx < self.w and 0 <= my < self.h):
             return
-        if hasattr(s,'btn'):s.btn.hv=s.btn.c(x,y)
-        if hasattr(s,'bt'):s.bt.hv=s.bt.c(x,y)
-        if hasattr(s,'bs'):s.bs.hv=s.bs.c(x,y)
-        for a in['s1','s2']:
-            if hasattr(s,a):getattr(s,a).hv=getattr(s,a).ct(x,y)
-        if hasattr(s,'sw'):
-            for sw in s.sw:sw.hv=sw.c(x,y)
-        if ev==cv2.EVENT_MOUSEMOVE:
-            if s.draw and ov and s.step in[1,2,3]:
-                s.paint((x,y),{1:s.m1,2:s.m2,3:s.m3}[s.step])
-            if flags&cv2.EVENT_FLAG_LBUTTON:
-                sl={'1':['s1'],'2':['s1','s2'],'3':['s1','s2'],'4':['s1'],'5':['s1']}.get(str(s.step),[])
-                for a in sl:
-                    if hasattr(s,a):
-                        sd=getattr(s,a)
-                        if sd.dg or sd.ct(x,y):sd.sp(x);sd.dg=True
-        elif ev==cv2.EVENT_LBUTTONDOWN:
-            if ov and s.step in[1,2,3]:
-                s.draw=True;s.last=(x,y)
-                s.paint((x,y),{1:s.m1,2:s.m2,3:s.m3}[s.step])
-            else:s._clk(x,y)
-        elif ev==cv2.EVENT_LBUTTONUP:
-            s.draw=False;s.last=None
-            for a in['s1','s2']:
-                if hasattr(s,a):getattr(s,a).dg=False
-        elif ev==cv2.EVENT_MOUSEWHEEL:
-            s.brush=min(150,s.brush+3)if flags>0 else max(5,s.brush-3)
-
-    def _clk(s,x,y):
-        if hasattr(s,'btn')and s.btn.c(x,y):s.btn.on^=True;return
-        if hasattr(s,'bt')and s.bt.c(x,y):
-            if s.step in[1,2,3]:
-                ms={1:s.m1,2:s.m2,3:s.m3}[s.step]
-                if np.sum(ms)>0:s.tk.start(s.step);s.bs.state=False;print("\n  ▸ Draw rectangle around object...")
-                else:print("  ⚠ Paint area first!")
-            return
-        if hasattr(s,'bs')and s.bs.c(x,y):
-            if s.step in[1,2,3]:s.bs.state=True;s.tk.en[s.step]=False
-            return
-        if hasattr(s,'sw'):
-            for sw in s.sw:
-                if sw.c(x,y):
-                    for ss in s.sw:ss.sl=False
-                    sw.sl=True;s.cl=sw.col;return
-
-    # Effects
-    def eblur(s,fr,idx):
-        if not(hasattr(s,'btn')and s.btn.on)or np.sum(s.m1)==0:return fr
-        k=int(3+s.s1.v/100*29)
-        if k%2==0:k+=1
-        bl=cv2.GaussianBlur(fr,(k,k),0)
-        if s.cl:
-            t=np.zeros_like(fr);t[:]=s.cl;bl=cv2.addWeighted(bl,0.7,t,0.3,0)
-        m=s.tk.msk(fr,1,fr.shape[:2])if s.tk.en.get(1,False)else s.m1
-        return np.where(cv.merge([m]*3)>0,bl,fr)
-
-    def eglit(s,fr,idx):
-        if not(hasattr(s,'btn')and s.btn.on)or np.sum(s.m2)==0:return fr
-        res=fr.copy();d=s.s1.v/100.;g=s.s2.v/100.
-        m=s.tk.msk(fr,2,fr.shape[:2])if s.tk.en.get(2,False)else s.m2
-        n=int(np.sum(m>0)*d*CFG.GDENS);coords=np.where(m>0)
-        if len(coords[0])==0:return fr
-        random.seed(idx*42+12345)
-        for _ in range(n):
-            ri=random.randint(0,len(coords[0])-1);cy,cx=coords[0][ri],coords[1][ri]
-            sz=random.randint(CFG.GMIN,CFG.GMAX)
-            br=random.uniform(0.7,1.)if random.random()>(1-0.15*3)else random.uniform(0.1,0.4)
-            co=list(cv2.cvtColor(np.uint8([[[random.randint(0,180),255,255]]]),cv2.COLOR_HSV2BGR)[0][0])if s.cl is None else list(s.cl)
-            br*=(0.5+g*0.5)
-            if CFG.GSTAR and sz>=2 and br>0.6:
-                rl=int(sz*3);rc=[min(255,int(c*br*1.2))for c in co]
-                cv.line(res,(cx-rl,cy),(cx+rl,cy),rc,1);cv.line(res,(cx,cy-rl),(cx,cy+rl),rc,1)
-                dl=rl//2;cv.line(res,(cx-dl,cy-dl),(cx+dl,cy+dl),rc,1);cv.line(res,(cx+dl,cy-dl),(cx-dl,cy+dl),rc,1)
-            cv.circle(res,(cx,cy),sz,[min(255,int(c*br))for c in co],-1)
-            if g>0.3 and sz>=2:cv.circle(res,(cx,cy),sz*2,[min(255,int(c*br*0.3))for c in co],1)
-        return res
-
-    def eglass(s,fr,idx):
-        if not(hasattr(s,'btn')and s.btn.on)or np.sum(s.m3)==0:return fr
-        st=s.s1.v/100.;tr=s.s2.v/100.
-        k=int(CFG.BMIN+st*(CFG.BMAX-CFG.BMIN))
-        if k%2==0:k+=1
-        bl=cv2.GaussianBlur(fr,(k,k),0)
-        noise=np.clip(bl.astype(np.int16)+np.random.normal(0,10*st,bl.shape).astype(np.int16),0,255).astype(np.uint8)
-        if st>0.2:
-            ed=cv2.dilate(cv2.Canny(s.m3,100,200),np.ones((3,3),np.uint8))
-            hl=np.zeros_like(fr);hl[ed>0]=(255,255,255);bl=cv2.addWeighted(bl,1-0.4*st,hl,0.4*st,0)
-        al=tr*(1-0.2)+0.2;gr=cv2.addWeighted(fr,1-al,bl,al,0)
-        m=s.tk.msk(fr,3,fr.shape[:2])if s.tk.en.get(3,False)else s.m3
-        return np.where(cv.merge([m]*3)>0,gr,fr)
-
-    def edust(s,fr,idx):
-        if not(hasattr(s,'btn')and s.btn.on):return fr
-        it=s.s1.v/100.;res=fr.copy().astype(np.float32)
-        if it>0:res+=np.random.normal(0,CFG.DGR*it*255,fr.shape)
-        if it>0.2:
-            da=CFG.DDS*it;g3=cv2.cvtColor(cv2.cvtColor(fr,cv2.COLOR_BGR2GRAY),cv2.COLOR_GRAY2BGR).astype(np.float32)
-            res=res*(1-da)+g3*da
-        if it>0.1:
-            h,w=fr.shape[:2];X,Y=np.meshgrid(np.linspace(-1,1,w),np.linspace(-1,1,h))
-            vig=1-np.clip(np.sqrt(X**2+Y**2)/1.5,0,1)*CFG.DVN*it;res*=np.stack([vig]*3,axis=2)
-        if it>0.1:res[:,:,2]*=(1+0.05*it);res[:,:,1]*=(1+0.05*it*0.5)
-        return np.clip(res,0,255).astype(np.uint8)
-
-    def ecol(s,fr,idx):
-        if s.cl is None:return fr
-        it=s.s1.v/100.
-        if it==0:return fr
-        ov=np.zeros_like(fr,dtype=np.float32);ov[:]=s.cl
-        return np.clip(fr.astype(np.float32)*(1-it*0.5)+ov*it*0.5,0,255).astype(np.uint8)
-
-    def proc(s,fr,idx):
-        r=fr.copy();r=s.eblur(r,idx);r=s.eglit(r,idx);r=s.eglass(r,idx);r=s.edust(r,idx);r=s.ecol(r,idx);return r
-
-    # Video processing
-    def runvid(s):
-        print(f"\n{'='*55}\n  ✨ Processing: {s.inp.name}\n  Output: {s.out.name}")
-        if any(s.tk.en.values()):print("  ⚡ Tracking ENABLED!")
-        print(f"  Frames: {s.tot} | FPS: {s.fps:.1f}\n{'='*55}\n")
-        out=cv2.VideoWriter(str(s.out),cv2.VideoWriter_fourcc(*'mp4v'),s.fps,(s.fw,s.fh))
-        s.cap.set(cv2.CAP_PROP_POS_FRAMES,0)
-        for i in range(s.tot):
-            ret,fr=s.cap.read()
-            if not ret:break
-            out.write(s.proc(fr,i))
-            p=(i+1)/s.tot*100;fl=int(45*i//s.tot)
-            sys.stdout.write(f'\r  [{"█"*fl}{"░"*(45-fl)}] {p:5.1f}% ({i+1}/{s.tot})');sys.stdout.flush()
+            
+        # Create overlay for cursor
+        overlay = self.canvas[:self.h, :self.w].copy()
+        
+        # Draw circle
+        cv2.circle(overlay, (mx, my), self.brush_size, (255, 255, 255), 1)
+        cv2.circle(overlay, (mx, my), self.brush_size, (255, 105, 180), 2)
+        
+        # Crosshair
+        cs = min(8, self.brush_size // 3)
+        cv2.line(overlay, (mx-cs, my), (mx+cs, my), (255, 255, 255), 1)
+        cv2.line(overlay, (mx, my-cs), (mx, my+cs), (255, 255, 255), 1)
+        
+        # Blend
+        alpha = 0.4
+        self.canvas[:self.h, :self.w] = cv2.addWeighted(
+            overlay, alpha, 
+            self.canvas[:self.h, :self.w], 1 - alpha, 
+            0
+        )
+    
+    def composite(self):
+        """Combine frame + mask preview + panel"""
+        # Show frame with mask overlay
+        display = self.frame.copy()
+        
+        # Red tint where mask is painted
+        overlay = display.copy()
+        overlay[self.mask > 0] = [50, 255, 150]  # Green tint for mask
+        display = cv2.addWeighted(display, 0.7, overlay, 0.3, 0)
+        
+        # Put on canvas
+        self.canvas[:self.h, :self.w] = display
+    
+    def render(self):
+        """Main render function"""
+        self.composite()
+        self.draw_ui()
+        self.draw_cursor()
+        cv2.imshow(self.window, self.canvas)
+    
+    def paint(self, point):
+        """Paint on mask"""
+        cv2.circle(self.mask, point, self.brush_size, 255, -1)
+        
+        if self.last_point is not None:
+            # Draw line between points for smooth stroke
+            # IMPORTANT: thickness must be >= 1!
+            thickness = max(1, self.brush_size)
+            cv2.line(self.mask, self.last_point, point, thickness, -1)
+        
+        self.last_point = point
+    
+    def mouse_callback(self, event, x, y, flags, param):
+        """Handle all mouse events"""
+        
+        # Update mouse position for cursor
+        self.mouse_pos = (x, y)
+        
+        over_video = (0 <= x < self.w and 0 <= y < self.h)
+        over_panel = (self.w <= x < self.canvas_w and 0 <= y < self.canvas_h)
+        
+        # Handle slider dragging
+        if event == cv2.EVENT_MOUSEMOVE:
+            if flags & cv2.EVENT_FLAG_LBUTTON:
+                # Check if dragging slider
+                if hasattr(self, '_dragging_slider') and self._dragging_slider:
+                    sx, sy, sw, sh = self.slider_rect
+                    if sx <= x <= sx + sw:
+                        # Calculate new value
+                        ratio = (x - sx) / sw
+                        ratio = max(0, min(1, ratio))
+                        self.blur_strength = int(ratio * 100)
+                        return
+        
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if over_video:
+                # Start painting
+                self.drawing = True
+                self.last_point = (x, y)
+                self.paint((x, y))
+                
+            elif over_panel:
+                # Check if clicking on slider handle
+                if hasattr(self, 'slider_handle_center'):
+                    hx, hy = self.slider_handle_center
+                    dist = ((x - hx)**2 + (y - hy)**2) ** 0.5
+                    if dist < 15:  # Clicked on handle
+                        self._dragging_slider = True
+                        return
+                    
+                    # Check if clicked on slider track
+                    sx, sy, sw, sh = self.slider_rect
+                    if sx <= x <= sx + sw and sy <= y <= sy + sh:
+                        ratio = (x - sx) / sw
+                        ratio = max(0, min(1, ratio))
+                        self.blur_strength = int(ratio * 100)
+                        self._dragging_slider = True
+                        return
+                        
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if self.drawing and over_video:
+                self.paint((x, y))
+                
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.drawing = False
+            self.last_point = None
+            self._dragging_slider = getattr(self, '_dragging_slider', False)
+            if hasattr(self, '_dragging_slider'):
+                self._dragging_slider = False
+                
+        elif event == cv2.EVENT_MOUSEWHEEL:
+            # Change brush size with scroll wheel
+            if flags > 0:  # Scroll up
+                self.brush_size = min(150, self.brush_size + 3)
+            else:  # Scroll down
+                self.brush_size = max(5, self.brush_size - 3)
+            
+            # Print to terminal so user sees it works
+            print(f"\r  Brush size: {self.brush_size}px{' '*20}", end='', flush=True)
+    
+    def apply_blur(self, frame):
+        """Apply blur effect using mask"""
+        if not self.blur_enabled or np.sum(self.mask) == 0:
+            return frame
+            
+        # Calculate kernel size from strength (must be odd number)
+        ksize = int(3 + (self.blur_strength / 100) * 29)
+        if ksize % 2 == 0:
+            ksize += 1
+            
+        # Apply Gaussian blur
+        blurred = cv2.GaussianBlur(frame, (ksize, ksize), 0)
+        
+        # Composite: use blurred where mask > 0, original elsewhere
+        mask_3ch = cv2.merge([self.mask, self.mask, self.mask])
+        result = np.where(mask_3c > 0, blurred, frame)
+        
+        return result
+    
+    def process_video(self, output_path):
+        """Process entire video and save"""
+        print(f"\n{'='*50}")
+        print(f"Processing video...")
+        print(f"Output: {output_path}")
+        print(f"Blur strength: {self.blur_strength}")
+        print(f"Mask pixels: {np.sum(self.mask > 0)}")
+        print(f"{'='*50}\n")
+        
+        # Setup output video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(str(output_path), fourcc, self.fps, (self.w, self.h))
+        
+        # Reset to beginning
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        
+        # Process each frame
+        for i in range(self.total):
+            ret, frame = self.cap.read()
+            if not ret:
+                break
+                
+            # Apply blur
+            processed = self.apply_blur(frame)
+            
+            # Write
+            out.write(processed)
+            
+            # Progress bar
+            progress = (i + 1) / self.total * 100
+            bar_len = 40
+            filled = int(bar_len * i // self.total)
+            bar = '█' * filled + '░' * (bar_len - filled)
+            sys.stdout.write(f'\r  [{bar}] {progress:5.1f}% ({i+1}/{self.total})')
+            sys.stdout.flush()
+        
         out.release()
-        print(f"\n\n  ✓ Complete! {s.out}")
-        s.audio()
-
-    def audio(s):
-        print("\n  Audio...");tmp=s.out.with_suffix('.temp.mp4')
+        print(f"\n\n✓ Video saved!")
+        
+        # Try to attach audio
+        self.attach_audio(output_path)
+    
+    def attach_audio(self, video_path):
+        """Extract audio from source and merge"""
+        print("\nAttaching audio...")
+        
+        temp = Path(str(video_path).replace('.mp4', '_temp.mp4'))
+        
         try:
-            r=subprocess.run(['ffmpeg','-y','-i',str(s.out),'-i',str(s.inp),'-map','0:v','-map','1:a?','-c:v','copy','-c:a','aac','-shortest',str(tmp)],capture_output=True,text=True)
-            if r.returncode==0:shutil.move(str(tmp),str(s.out));print("  ✓ Audio OK!")
-            else:print("  ⚠ No audio");tmp.exists()and tmp.unlink()
-        except FileNotFoundError:print("  ⚠ Install: brew install ffmpeg")
-        except Exception as e:print(f"  ⚠ {e}");tmp.exists()and tmp.unlink()
-
-    # Editor loop
-    def run(s):
-        print("\n"+"="*55+"\n  ✨ Y2K Zones v2.3\n"+"="*55)
-        print(f"\n  {s.inp.name} | {s.fw}×{s.fh}")
-        print("\n  • Paint areas → Scroll for brush → Enter\n")
-        cv2.namedWindow(s.win,cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(s.win,s.mouse)
-        cv2.resizeWindow(s.win,s.cw,min(s.ch,900))
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-i', str(Path(self.cap.get(cv2.CAP_PROP_FILENAME)) if hasattr(self, 'input_path') else ''),
+                '-map', '0:v',
+                '-map', '1:a?',
+                '-c:v', 'copy',
+                '-c:a', 'aac',
+                '-shortest',
+                str(temp)
+            ]
+            
+            # Note: need to store input path for audio extraction
+            if hasattr(self, 'input_path'):
+                cmd[cmd.index('-i')+1] = str(self.input_path)
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                shutil.move(str(temp), str(video_path))
+                print("✓ Audio attached!")
+            else:
+                print("⚠ Could not attach audio (video saved without audio)")
+                if temp.exists():
+                    temp.unlink()
+                    
+        except FileNotFoundError:
+            print("⚠ ffmpeg not found. Install: brew install ffmpeg")
+        except Exception as e:
+            print(f"⚠ Audio error: {e}")
+    
+    def run(self):
+        """Main editor loop"""
+        print("\n" + "="*50)
+        print("  ✨ Y2K Zones - Blur Editor")
+        print("="*50)
+        print(f"\n  Video: {self.w}x{self.h} | {self.total} frames | {self.fps:.1f} fps")
+        print("\n  Paint areas → Adjust strength → Press Enter\n")
+        
+        # Store input path for later
+        if len(sys.argv) > 1:
+            self.input_path = Path(sys.argv[1])
+        
+        # Create window
+        cv2.namedWindow(self.window, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(self.window, self.mouse_callback)
+        cv2.resizeWindow(self.window, self.canvas_w, min(self.canvas_h, 700))
+        
         while True:
-            s.render()
-            key=cv2.waitKey(30)&0xFF
-            if key==27:print("\n  ✗ Cancelled");break
-            elif key==13:
-                if s.step<5:
-                    if s.tk.sl:print("  ⚠ Finish box selection");continue
-                    md="🎯 TRACK"if s.tk.en.get(s.step,False)else"📍 STATIC"
-                    print(f"\n  ✓ Step {s.step} [{md}]")
-                    s.step+=1;s.ui();s.draw=s.last=False
+            self.render()
+            
+            key = cv2.waitKey(30) & 0xFF
+            
+            if key == 27:  # ESC
+                print("\n✗ Cancelled")
+                break
+                
+            elif key == 13:  # Enter
+                # Determine output path
+                if len(sys.argv) > 2:
+                    out_path = Path(sys.argv[2])
                 else:
-                    print("\n  ✓ All done!\n");cv2.destroyWindow(s.win);s.runvid();break
-        s.cap.release();cv2.destroyAllWindows()
+                    out_path = self.input_path.with_name(f"{self.input_path.stem}_blurred.mp4")
+                
+                print(f"\n✓ Starting processing...")
+                cv2.destroyWindow(self.window)
+                self.process_video(out_path)
+                break
+        
+        self.cap.release()
+        cv2.destroyAllWindows()
 
 
 def main():
-    p=argparse.ArgumentParser(description='✨ Y2K Zones v2.3')
-    p.add_argument('input');p.add_argument('output',nargs='?')
-    a=p.parse_args()
-    if not Path(a.input).exists():print(f"Error:{a.input}",file=sys.stderr);sys.exit(1)
-    try:App(a.input,a.output).run()
-    except Exception as e:print(f"\n✗{e}",file=sys.stderr);sys.exit(1)
+    parser = argparse.ArgumentParser(description='Y2K Zones - Apply blur to video')
+    parser.add_argument('input', help='Input video file')
+    parser.add_argument('output', nargs='?', help='Output file (default: input_blurred.mp4)')
+    args = parser.parse_args()
+    
+    if not Path(args.input).exists():
+        print(f"Error: File not found: {args.input}")
+        sys.exit(1)
+    
+    try:
+        App(args.input).run()
+    except Exception as e:
+        print(f"\nError: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     main()
