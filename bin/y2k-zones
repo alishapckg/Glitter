@@ -1,28 +1,81 @@
 #!/usr/bin/env python3
 """
-Y2K Zones - Final Working Version (with bounds checking)
+Y2K Zones v4.0 - Auto-Installing Version
+Checks and installs all dependencies automatically
 """
 
 import sys
 import os
-import argparse
 import subprocess
 import shutil
 import threading
 from pathlib import Path
 
+
+def auto_install():
+    """Check and install missing dependencies"""
+    
+    def install_pkg(pkg):
+        """Install pip package"""
+        print(f"  📦 Installing {pkg}...")
+        result = subprocess.run(
+            [sys.executable, '-m', 'pip', 'install', '--user', pkg],
+            capture_output=True,
+            text=True
+        )
+        return result.returncode == 0
+    
+    def check_ffmpeg():
+        """Check if ffmpeg is available"""
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True)
+            return True
+        except FileNotFoundError:
+            return False
+    
+    # Check OpenCV
+    try:
+        import cv2
+        print(f"  ✓ OpenCV {cv2.__version__}")
+    except ImportError:
+        print("  ⚠ OpenCV not found")
+        if not install_pkg('opencv-python-headless'):
+            print("  ✗ Failed to install OpenCV")
+            print("  Run: pip3 install opencv-python-headless")
+            sys.exit(1)
+        import cv2
+    
+    # Check NumPy
+    try:
+        import numpy
+        print(f"  ✓ NumPy {numpy.__version__}")
+    except ImportError:
+        print("  ⚠ NumPy not found")
+        if not install_pkg('numpy'):
+            print("  ✗ Failed to install NumPy")
+            sys.exit(1)
+        import numpy
+    
+    # Check ffmpeg
+    if check_ffmpeg():
+        print("  ✓ ffmpeg found")
+    else:
+        print("  ⚠ ffmpeg not found (audio disabled)")
+        print("  To enable audio: brew install ffmpeg")
+        # Don't exit - just continue without audio
+        global HAS_FFMPEG
+        HAS_FFMPEG = False
+        return
+    
+    global HAS_FFMPEG
+    HAS_FFMPEG = True
+
+
+# Run auto-install before imports that might fail
+auto_install()
+
 import cv2
 import numpy as np
-
-
-# Auto-install dependencies
-try:
-    import cv2; import numpy
-except ImportError:
-    os.system(f"{sys.executable} -m pip install opencv-python numpy --user")
-    print("Restarting..."); os.execl(sys.executable, sys.executable, *sys.argv)
-
-import cv2; import numpy as np
 
 
 class App:
@@ -67,23 +120,20 @@ class App:
         p[:] = (35, 28, 45)
         x = 15
         
-        # Title
         cv2.putText(p, "✨ Y2K ZONES", (x, 32), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 105, 180), 2)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,105,180), 2)
         
-        # Settings box
         cv2.rectangle(p, (x-5, 48), (x+310, 140), (50, 45, 60), -1)
         
         cv2.putText(p, f"🖌️ Brush: {self.brush}px", (x, 70),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 215, 100), 1)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255,215,100), 1)
         
         cv2.putText(p, f"💫 Blur: {self.blur_val}%", (x, 98),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 182, 193), 1)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255,182,193), 1)
         
         cv2.putText(p, f"🎭 Mask: {np.count_nonzero(self.mask):,} px", (x, 126),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 230, 255), 1)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 230,255), 1)
         
-        # Commands
         cv2.putText(p, "── Terminal Commands ──", (x, 165),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 105, 180), 1)
         
@@ -100,348 +150,172 @@ class App:
             cv2.putText(p, f"  {cmd}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 195, 210), 1)
             cv2.putText(p, f"{desc}", (x + 95, y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 135, 155), 1)
         
-        # Bottom status
         by = self.ch - 28
         cv2.rectangle(p, (x-5, by-12), (x+310, self.ch-3), (40, 35, 50), -1)
         cv2.putText(p, "🖱️ Drag to paint | Scroll: brush | Type commands below", 
                    (x, by+5), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (180, 175, 195), 1)
     
     def render(self):
-        # Composite frame with mask overlay
         disp = self.frame.copy()
         disp[self.mask > 0] = [80, 255, 160]
         self.canvas[:self.h, :self.w] = disp
-        
-        # Draw panel
         self.draw_panel()
         
-        # Draw cursor (only if within bounds!)
         mx, my = self.mp
         if 0 <= mx < self.w and 0 <= my < self.h:
             ov = self.canvas[:self.h, :self.w].copy()
-            cv2.circle(ov, (mx, my), self.brush, (255, 255, 255), 1)
-            cv2.circle(ov, (mx, my), self.brush, (255, 105, 180), 2)
+            cv2.circle(ov,(mx,my),self.brush,(255,255,255),1)
+            cv2.circle(ov,(mx,my),self.brush,(255,105,180),2)
             cs = min(8, self.brush // 3)
-            cv2.line(ov, (mx-cs, my), (mx+cs, my), (255, 255, 255), 1)
-            cv2.line(ov, (mx, my-cs), (mx, my+cs), (255, 255, 255), 1)
-            self.canvas[:self.h, :self.w] = cv2.addWeighted(
-                ov, 0.35, self.canvas[:self.h, :self.w], 0.65, 0
-            )
+            cv2.line(ov,(mx-cs,my),(mx+cs,my),(255,255,255),1)
+            cv2.line(ov,(mx,my-cs),(mx,my+cs),(255,255,255),1)
+            self.canvas[:self.h,:self.w] = cv2.addWeighted(ov,0.35,self.canvas[:self.h,:self.w],0.65,0)
         
         cv2.imshow(self.win, self.canvas)
     
     def _paint(self, x, y):
-        """Paint on mask with bounds checking"""
-        # Check bounds for current point
         if not (0 <= x < self.w and 0 <= y < self.h):
             return
-        
-        # Draw circle at current position
-        cv2.circle(self.mask, (x, y), self.brush, 255, -1)
-        
-        # Draw line from last point (with bounds check)
-        if self.last is not None:
-            lx, ly = self.last
-            # Only draw line if last point was also in bounds
-            if 0 <= lx < self.w and 0 <= ly < self.h:
-                # Use fixed small thickness to avoid OpenCV error
-                cv2.line(self.mask, self.last, (x, y), 3, -1)
-        
-        # Update last point
-        self.last = (x, y)
+        cv2.circle(self.mask,(x,y),self.brush,255,-1)
+        if self.last:
+            lx,ly=self.last
+            if 0<=lx<self.w and 0<=ly<self.h:
+                cv2.line(self.mask,self.last,(x,y),3,-1)
+        self.last=(x,y)
     
-    def on_mouse(self, event, x, y, flags, param):
-        """Mouse callback with bounds checking"""
-        if not self.running:
-            return
+    def on_mouse(self, ev, x, y, flags, param):
+        if not self.running: return
+        self.mp=(x,y); ov=0<=x<self.w and 0<=y<self.h
         
-        # Always update mouse position (for cursor display)
-        self.mp = (x, y)
-        
-        # Check if over video area
-        over_video = (0 <= x < self.w and 0 <= y < self.h)
-        
-        if event == cv2.EVENT_MOUSEMOVE:
-            if self.drawing and over_video:
-                # Paint with bounds checking
-                self._paint(x, y)
-                
-        elif event == cv2.EVENT_LBUTTONDOWN:
-            if over_video:
-                # Start drawing only if in bounds
-                self.drawing = True
-                self.last = (x, y)
-                self._paint(x, y)
-            # If click outside video area - ignore (don't start drawing)
-                
-        elif event == cv2.EVENT_LBUTTONUP:
-            # Stop drawing
-            self.drawing = False
-            self.last = None
-            
-        elif event == cv2.EVENT_MOUSEWHEEL:
-            # Change brush size (works anywhere)
-            if flags > 0:
-                self.brush = min(150, max(5, self.brush + 3))
-            else:
-                self.brush = min(150, max(5, self.brush - 3))
-            
-            # Print status so user sees it works
-            sys.stdout.write(f'\r  🖌️ {self.brush}px | 💫 {self.blur_val}% | 🎭 {np.count_nonzero(self.mask):,}px{" "*10}')
+        if ev==cv2.EVENT_MOUSEMOVE and self.drawing and ov:
+            self._paint(x,y)
+        elif ev==cv2.EVENT_LBUTTONDOWN and ov:
+            self.drawing=True; self.last=(x,y); self._paint(x,y)
+        elif ev==cv2.EVENT_LBUTTONUP:
+            self.drawing=False; self.last=None
+        elif ev==cv2.EVENT_MOUSEWHEEL:
+            self.brush=min(150,max(5,self.brush+(3 if flags>0 else -3)))
+            sys.stdout.write(f'\r  🖌️{self.brush}px | 💫{self.blur_val}% | 🎭{np.count_nonzero(self.mask):,}px{" "*10}')
             sys.stdout.flush()
     
     def process_video(self):
-        """Process video with blur effect"""
-        # Determine output path
-        out_path = self.input_path.with_name(f"{self.input_path.stem}_y2k.mp4")
-        if len(sys.argv) > 2:
-            out_path = Path(sys.argv[2])
+        out_path=self.input_path.with_name(f"{self.input_path.stem}_y2k.mp4")
+        if len(sys.argv)>2: out_path=Path(sys.argv[2])
         
-        print(f"\n{'='*55}")
-        print(f"  Processing: {self.input_path.name}")
-        print(f"  Output: {out_path.name}")
-        print(f"  Blur: {self.blur_val}% | Mask: {np.count_nonzero(self.mask):,} pixels")
-        print(f"{'='*55}\n")
+        print(f"\n{'='*55}\n  Processing: {self.input_path.name}\n  Output: {out_path.name}\n  Blur:{self.blur_val}% | Mask:{np.count_nonzero(self.mask):,}px\n{'='*55}\n")
         
-        # Calculate blur kernel size
-        ksize = int(3 + (self.blur_val / 100) * 29)
-        if ksize % 2 == 0:
-            ksize += 1
-        ksize = max(3, min(ksize, 31))  # Clamp to valid range
+        k=int(3+self.blur_val/100*29)
+        if k%2==0:k+=1;k=max(3,min(k,31))
         
-        # Setup video writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(str(out_path), fourcc, self.fps, (self.w, self.h))
+        fourcc=cv2.VideoWriter_fourcc(*'mp4v')
+        out=cv2.VideoWriter(str(out_path),fourcc,self.fps,(self.w,self.h))
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES,0)
         
-        # Reset to beginning
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        
-        # Process each frame
         for i in range(self.total):
-            ret, frame = self.cap.read()
-            if not ret:
-                break
-            
-            # Apply blur where mask exists
+            ret,fr=self.cap.read()
+            if not ret: break
             if np.any(self.mask):
-                blurred = cv2.GaussianBlur(frame, (ksize, ksize), 0)
-                mask_3ch = cv2.merge([self.mask] * 3)
-                result = np.where(mask_3ch > 0, blurred, frame)
-                out.write(result)
-            else:
-                out.write(frame)
-            
-            # Progress update (every 10 frames to avoid slowdown)
-            if i % 10 == 0 or i == self.total - 1:
-                pct = (i + 1) / self.total * 100
-                filled = int(45 * i / self.total)
-                bar = '█' * filled + '░' * (45 - filled)
-                sys.stdout.write(f'\r  [{bar}] {pct:5.1f}% ({i+1}/{self.total})')
+                bl=cv2.GaussianBlur(fr,(k,k),0)
+                m3=cv2.merge([self.mask]*3)
+                fr=np.where(m3>0,bl,fr)
+            out.write(fr)
+            if i%10==0 or i==self.total-1:
+                pct=(i+1)/self.total*100
+                fl=int(45*i//self.total)
+                sys.stdout.write(f'\r  [{"█"*fl}{"░"*(45-fl)}] {pct:.1f}% ({i+1}/{self.total})')
                 sys.stdout.flush()
         
         out.release()
-        print(f"\n\n✓ Video saved to: {out_path}")
+        print(f"\n\n✓ Video saved!")
         
-        # Try to attach audio
-        self._attach_audio(out_path)
+        # Audio attachment with better error handling
+        if 'HAS_FFMPEG' in globals() and globals()['HAS_FFMPEG']:
+            self._attach_audio(out_path)
+        else:
+            print("\n⚠ Skipping audio (ffmpeg not available)")
+            print("  Your video is ready!")
+            print("\nTo add audio later:")
+            print(f'  ffmpeg -i "{out_path}" -i "{self.input_path}" -map 0:v -map 1:a? -c copy -c:a ac3 "{out_path.with_suffix(\"_audio.mp4\")}"')
     
-    def _attach_audio(self, video_path):
-        """Extract audio from source and merge using ffmpeg"""
+    def _attach_audio(self, vp):
         print("\n  Attaching audio...")
-        
-        temp_file = video_path.with_suffix('.temp.mp4')
+        tmp=vp.with_suffix('.temp.mp4')
         
         try:
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', str(video_path),
-                '-i', str(self.input_path),
-                '-map', '0:v',
-                '-map', '1:a?',
-                '-c:v', 'copy',
-                '-c:a', 'aac',
-                '-shortest',
-                str(temp_file)
-            ]
+            cmd=['ffmpeg','-y','-i',str(vp),'-i',str(self.input_path),
+                 '-map','0:v','-map','1:a?','-c:v','copy','-c:a','aac',
+                 '-shortest',str(tmp)]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            r=subprocess.run(cmd,capture_output=True,text=True,timeout=60)
             
-            if result.returncode == 0:
-                shutil.move(str(temp_file), str(video_path))
-                print("  ✓ Audio attached successfully!")
-            else:
-                print("  ⚠ Could not attach audio (video saved without audio)")
-                if temp_file.exists():
-                    temp_file.unlink()
-                    
+            if r.returncode==0 and tmp.exists():
+                shutil.move(str(tmp),str(vp));print("  ✓ Audio attached!");return
+            
+            print("  ⚠ ffmpeg failed")
+            if r.stderr:
+                err=r.stderr.strip().split('\n')
+                print(f"    Error: {err[-1]}")
+            if tmp.exists():tmp.unlink()
+                
         except FileNotFoundError:
-            print("  ⚠ ffmpeg not found. Install with: brew install ffmpeg")
-            print("  Video saved but without audio track")
+            print("  ⚠ ffmpeg not found during processing")
         except Exception as e:
-            print(f"  ⚠ Error attaching audio: {e}")
+            print(f"  ⚠ Error: {e}")
     
     def run(self):
-        """Main editor loop"""
-        print("\n" + "=" * 55)
-        print("  ✨ Y2K Zones - Terminal Command Mode")
-        print("=" * 55)
-        print(f"\n  Video: {self.input_path.name}")
-        print(f"  Resolution: {self.w} × {self.h} | Frames: {self.total}\n")
-        print("  ⌨️  Type commands in terminal (window is open)\n")
+        print("\n"+"="*55+"\n  ✨ Y2K Zones\n"+"="*55+f"\n{self.input_path.name}|{self.w}×{self.h}\n\nType:brush N|blur N|clear|done\n")
         
-        # Create window
-        cv2.namedWindow(self.win, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(self.win, self.on_mouse)
-        cv2.resizeWindow(self.win, self.cw, min(self.ch, 700))
+        cv2.namedWindow(self.win,cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(self.win,self.on_mouse)
+        cv2.resizeWindow(self.win,self.cw,min(self.ch,700))
         
-        # Start command listener thread
-        def command_listener():
+        def cmd_thread():
             while self.running:
                 try:
-                    cmd_input = input("\nCommand> ").strip().lower()
-                    
-                    if not cmd_input:
-                        continue
-                    
-                    parts = cmd_input.split()
-                    action = parts[0]
-                    
-                    if action == 'brush' and len(parts) > 1:
-                        try:
-                            val = int(parts[1])
-                            self.brush = max(5, min(150, val))
-                            print(f"  ✓ Brush size set to: {self.brush}px")
-                        except ValueError:
-                            print("  ⚠ Invalid number. Usage: brush <size>")
-                            
-                    elif action == 'blur' and len(parts) > 1:
-                        try:
-                            val = int(parts[1])
-                            self.blur_val = max(1, min(100, val))
-                            print(f"  ✓ Blur strength set to: {self.blur_val}%")
-                        except ValueError:
-                            print("  ⚠ Invalid number. Usage: blur <value>")
-                            
-                    elif action == 'clear':
-                        self.mask[:] = 0
-                        print("  ✓ Mask cleared")
-                        
-                    elif action == 'undo':
-                        # Simple undo: erode mask slightly
-                        kernel_size = max(5, self.brush * 2)
-                        kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                        self.mask = cv2.erode(self.mask, kernel, iterations=1)
-                        print("  ✓ Undo (eroded mask)")
-                        
-                    elif action in ['done', 'save', 'enter']:
-                        self.running = False
-                        print(f"\n  Starting processing...")
-                        
-                    elif action in ['exit', 'quit', 'cancel']:
-                        self.running = False
-                        print("\n  ✗ Cancelled by user")
-                        
-                    elif action == 'help':
-                        print("""
-  Available commands:
-  
-    brush <size>     Set brush size (5-150)
-                     Example: brush 40
-  
-    blur <value>    Set blur strength (1-100)
-                     Example: blur 75
-  
-    clear           Clear the entire mask
-  
-    undo            Undo last stroke (erode)
-  
-    done / save     Process video and save
-                  Output: <input>_y2k.mp4
-  
-    exit / cancel   Exit without saving
-  
-  Mouse controls:
-    • Left-click + drag: Paint mask area
-    • Scroll wheel: Change brush size
-                        """)
-                    else:
-                        print(f"  ? Unknown command: '{action}'. Type 'help' for available commands")
-                        
-                except EOFError:
-                    # EOF when terminal closes
-                    self.running = False
-                    break
-                except KeyboardInterrupt:
-                    self.running = False
-                    break
-                except Exception as e:
-                    print(f"  Error: {e}")
+                    c=input("\nCommand>").strip().lower().split()
+                    if not c:continue
+                    a=c[0]
+                    if a=='brush' and len(c)>1:
+                        try:self.brush=int(c[1]);print(f"  ✓ Brush:{self.brush}")
+                        except:print("  ⚠ Invalid number")
+                    elif a=='blur' and len(c)>1:
+                        try:self.blur_val=int(c[1]);print(f"  ✓ Blur:{self.blur_val}")
+                        except:print("  ⚠ Invalid number")
+                    elif a=='clear':self.mask[:]=0;print("  ✓ Cleared")
+                    elif a=='undo':
+                        k=max(5,self.brush*2);self.mask=cv2.erode(self.mask,np.ones((k,k),np.uint8),1);print("  ✓ Undo")
+                    elif a in['done','save']:
+                        self.running=False;print("\nProcessing...")
+                    elif a in['exit','quit']:
+                        self.running=False;print("\n✗ Cancelled")
+                    elif a=='help':
+                        print("\nCommands:\n brush N\n blur N\n clear\n undo\n done\n exit")
+                    else:print(f"  ? Unknown:{a}. Try help")
+                except EOFError:self.running=False;break
+                except KeyboardInterrupt:self.running=False;break
+                except Exception as e:print(f"Error:{e}")
         
-        # Start thread
-        t = threading.Thread(target=command_listener, daemon=True)
-        t.start()
+        threading.Thread(target=cmd_thread,daemon=True).start()
         
-        # Main render loop
         while self.running:
             self.render()
-            
-            key = cv2.waitKey(30) & 0xFF
-            
-            if key == 27:  # ESC key
-                self.running = False
-                print("\n  ✗ Cancelled (ESC pressed)")
-                break
-                
-            elif key == 13:  # Enter key
-                self.running = False
-                print(f"\n  ✓ Enter pressed - processing...")
+            key=cv2.waitKey(30)&0xFF
+            if key==27 or key==13:
+                self.running=False
+                if key==27:print("\n✗ ESC");break
+                else:print("\n✗ Enter→process");break
         
-        # Cleanup
-        self.cap.release()
-        cv2.destroyAllWindows()
-        
-        # Process video if done normally (not cancelled)
-        if np.count_nonzero(self.mask) > 0 or True:  # Always process for now
-            self.process_video()
+        self.cap.release();cv2.destroyAllWindows()
+        if np.count_nonzero(self.mask)>0:self.process_video()
 
 
 def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(
-        description='Y2K Zones - Apply Y2K blur effect to video',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s video.mov
-  %(prog)s video.mov output.mp4
+    p=argparse.ArgumentParser(description='Y2K Zones')
+    p.add_argument('input');p.add_argument('output',nargs='?')
+    a=p.parse_args()
+    if not Path(a.input).exists():print(f"Error:{a.input}");sys.exit(1)
+    try:App(a.input).run()
+    except Exception as e:print(f"Error:{e}");sys.exit(1)
 
-Commands (type in terminal after window opens):
-  brush 40       Set brush size to 40 pixels
-  blur 70        Set blur strength to 70%
-  clear          Clear painted mask
-  done           Process and save video
-        """
-    )
-    
-    parser.add_argument('input', help='Input video file path')
-    parser.add_argument('output', nargs='?', help='Output file path (optional)')
-    
-    args = parser.parse_args()
-    
-    # Validate input file exists
-    if not Path(args.input).exists():
-        print(f"Error: Input file not found: {args.input}", file=sys.stderr)
-        sys.exit(1)
-    
-    try:
-        app = App(args.input)
-        app.run()
-    except Exception as e:
-        print(f"\nError: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-
-if __name__ == '__main__':
+if __name__=='__main__':
     main()
