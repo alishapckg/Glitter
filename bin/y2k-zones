@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Y2K Zones - Interactive Y2K Glam Video Effects Tool
-Author: Y2K Zones Team | License: MIT | Version: 1.0.0
+Y2K Zones - Interactive Y2K Glam Video Effects Tool WITH OBJECT TRACKING
+Author: Y2K Zones Team | License: MIT | Version: 1.1.0
 """
 
 import sys
@@ -18,16 +18,13 @@ import numpy as np
 
 
 # ============================================================================
-# COLOR PALETTE - Based on Y2K Aesthetic References
+# COLOR PALETTE
 # ============================================================================
 
 class Y2KColors:
-    """Exact color palette extracted from visual references"""
     PINK_LIGHT = (255, 182, 193)
     PINK_HOT = (255, 105, 180)
-    PINK_DEEP = (255, 20, 147)
     LAVENDER = (221, 160, 221)
-    LILAC_ORCHID = (218, 112, 214)
     MINT = (152, 255, 152)
     GOLD = (255, 215, 0)
     PANEL_BG = (40, 35, 50)
@@ -41,32 +38,22 @@ class Y2KColors:
     FILTER_EMERALD = (100, 220, 160)
     FILTER_CYAN = (140, 210, 255)
     FILTER_WARM_GOLD = (255, 200, 120)
+    TRACK_COLOR = (0, 255, 0)      # Green for tracking box
+    STATIC_COLOR = (255, 165, 0)   # Orange for static mode
 
 
 class GlitterConfig:
-    MIN_SIZE = 1
-    MAX_SIZE = 4
-    STAR_BURST_ENABLED = True
-    STAR_BURST_RAYS = 4
-    STAR_BURST_LENGTH = 3
-    TWINKLE_SPEED = 0.15
+    MIN_SIZE = 1; MAX_SIZE = 4; STAR_BURST_ENABLED = True
+    STAR_BURST_RAYS = 4; STAR_BURST_LENGTH = 3; TWINKLE_SPEED = 0.15
     DENSITY_LEVELS = {'low': 0.003, 'medium': 0.008, 'high': 0.02}
 
-
 class GlassConfig:
-    BLUR_KERNEL_BASE = 5
-    BLUR_KERNEL_MAX = 31
-    EDGE_HIGHLIGHT_STRENGTH = 0.4
-    IRIDESCENCE_ENABLED = True
-    IRIDESCENCE_STRENGTH = 0.15
-
+    BLUR_KERNEL_BASE = 5; BLUR_KERNEL_MAX = 31
+    EDGE_HIGHLIGHT_STRENGTH = 0.4; IRIDESCENCE_ENABLED = True; IRIDESCENCE_STRENGTH = 0.15
 
 class DustConfig:
-    GRAIN_INTENSITY_BASE = 0.03
-    DESATURATION_MAX = 0.3
-    VIGNETTE_STRENGTH_MAX = 0.6
-    VIGNETTE_RADIUS_RATIO = 1.5
-    WARM_SHIFT = 0.05
+    GRAIN_INTENSITY_BASE = 0.03; DESATURATION_MAX = 0.3
+    VIGNETTE_STRENGTH_MAX = 0.6; VIGNETTE_RADIUS_RATIO = 1.5; WARM_SHIFT = 0.05
 
 
 # ============================================================================
@@ -74,62 +61,179 @@ class DustConfig:
 # ============================================================================
 
 class Button:
-    def __init__(self, x, y, width, height, text, toggle=False):
-        self.x, self.y, self.width, self.height = x, y, width, height
+    def __init__(self, x, y, w, h, text, toggle=False):
+        self.x, self.y, self.w, self.h = x, y, w, h
         self.text, self.toggle = text, toggle
         self.state, self.hovered = False, False
 
     def contains(self, px, py):
-        return self.x <= px <= self.x + self.width and self.y <= py <= self.y + self.height
+        return self.x <= px <= self.x + self.w and self.y <= py <= self.y + self.h
 
     def draw(self, canvas):
         color = Y2KColors.ACCENT if (self.toggle and self.state) else (Y2KColors.SLIDER_TRACK if self.toggle else (Y2KColors.ACCENT if self.hovered else (60, 55, 75)))
-        cv2.rectangle(canvas, (self.x, self.y), (self.x + self.width, self.y + self.height), color, -1)
-        cv2.rectangle(canvas, (self.x, self.y), (self.x + self.width, self.y + self.height), Y2KColors.TEXT_SECONDARY, 1)
+        cv2.rectangle(canvas, (self.x, self.y), (self.x + self.w, self.y + self.h), color, -1)
+        cv2.rectangle(canvas, (self.x, self.y), (self.x + self.w, self.y + self.h), Y2KColors.TEXT_SECONDARY, 1)
         label = f"{self.text}: {'ON' if self.state else 'OFF'}" if self.toggle else self.text
         tw, th = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
-        cv2.putText(canvas, label, (self.x + (self.width - tw) // 2, self.y + (self.height + th) // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.45, Y2KColors.TEXT_PRIMARY, 1)
+        cv2.putText(canvas, label, (self.x + (self.w - tw)//2, self.y + (self.h + th)//2), cv2.FONT_HERSHEY_SIMPLEX, 0.45, Y2KColors.TEXT_PRIMARY, 1)
 
 
 class Slider:
-    def __init__(self, x, y, width, min_val, max_val, initial, label):
+    def __init__(self, x, y, width, min_v, max_v, init, label):
         self.x, self.y, self.width = x, y, width
-        self.height = 20
-        self.min_val, self.max_val, self.value = min_val, max_val, initial
-        self.label, self.dragging, self.handle_radius = label, False, 8
+        self.h = 20; self.min_v, self.max_v, self.value = min_v, max_v, init
+        self.label, self.dragging = label, False; self.hr = 8
 
     @property
-    def handle_x(self):
-        return int(self.x + (self.value - self.min_val) / (self.max_val - self.min_val) * self.width)
+    def hx(self): return int(self.x + (self.value - self.min_v)/(self.max_v - self.min_v)*self.width)
 
-    def contains_track(self, px, py):
-        return self.x <= px <= self.x + self.width and self.y <= py <= self.y + self.height
+    def contains_track(self, px, py): return self.x <= px <= self.x+self.width and self.y <= py <= self.y+self.h
+    def set_pos(self, px):
+        r = max(0, min(1, (px-self.x)/self.width))
+        self.value = self.min_v + r*(self.max_v-self.min_v)
 
-    def set_from_pos(self, px):
-        ratio = max(0, min(1, (px - self.x) / self.width))
-        self.value = self.min_val + ratio * (self.max_val - self.min_val)
-
-    def draw(self, canvas):
-        ty = self.y + self.height // 2
-        cv2.line(canvas, (self.x, ty), (self.x + self.width, ty), Y2KColors.SLIDER_TRACK, 6)
-        cv2.line(canvas, (self.x, ty), (self.handle_x, ty), Y2KColors.SLIDER_FILL, 6)
-        cv2.circle(canvas, (self.handle_x, ty), self.handle_radius, Y2KColors.TEXT_PRIMARY, -1)
-        cv2.circle(canvas, (self.handle_x, ty), self.handle_radius, Y2KColors.ACCENT, 2)
-        cv2.putText(canvas, f"{self.label}: {int(self.value)}", (self.x, self.y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, Y2KColors.TEXT_PRIMARY, 1)
+    def draw(self, c):
+        ty = self.y + self.h//2
+        cv2.line(c, (self.x,ty), (self.x+self.width,ty), Y2KColors.SLIDER_TRACK, 6)
+        cv2.line(c, (self.x,ty), (self.hx,ty), Y2KColors.SLIDER_FILL, 6)
+        cv2.circle(c, (self.hx,ty), self.hr, Y2KColors.TEXT_PRIMARY, -1)
+        cv2.circle(c, (self.hx,ty), self.hr, Y2KColors.ACCENT, 2)
+        cv2.putText(c, f"{self.label}: {int(self.value)}", (self.x,self.y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, Y2KColors.TEXT_PRIMARY, 1)
 
 
 class ColorSwatch:
-    def __init__(self, x, y, size, color, label, selected=False):
-        self.x, self.y, self.size, self.color, self.label, self.selected = x, y, size, color, label, selected
+    def __init__(self, x, y, sz, color, label, sel=False):
+        self.x, self.y, self.sz, self.color, self.label, self.sel = x, y, sz, color, label, sel
+    def contains(self, px, py): return self.x<=px<=self.x+self.sz and self.y<=py<=self.y+self.sz
+    def draw(self, c):
+        cv2.rectangle(c, (self.x,self.y), (self.x+self.sz,self.y+self.sz), self.color or (100,100,100), -1)
+        cv2.rectangle(c, (self.x,self.y), (self.x+self.sz,self.y+self.sz), Y2KColors.TEXT_PRIMARY if self.sel else Y2KColors.TEXT_SECONDARY, 3 if self.sel else 1)
+        cv2.putText(c, self.label, (self.x,self.y+self.sz+15), cv2.FONT_HERSHEY_SIMPLEX, 0.35, Y2KColors.TEXT_SECONDARY, 1)
 
-    def contains(self, px, py):
-        return self.x <= px <= self.x + self.size and self.y <= py <= self.y + self.size
 
-    def draw(self, canvas):
-        cv2.rectangle(canvas, (self.x, self.y), (self.x + self.size, self.y + self.size), self.color or (100, 100, 100), -1)
-        cv2.rectangle(canvas, (self.x, self.y), (self.x + self.size, self.y + self.size),
-                      Y2KColors.TEXT_PRIMARY if self.selected else Y2KColors.TEXT_SECONDARY, 3 if self.selected else 1)
-        cv2.putText(canvas, self.label, (self.x, self.y + self.size + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.35, Y2KColors.TEXT_SECONDARY, 1)
+# ============================================================================
+# TRACKER MANAGER - NEW!
+# ============================================================================
+
+class TrackerManager:
+    """Manages object tracking for mask regions"""
+    
+    def __init__(self):
+        self.trackers = {}  # step -> {'tracker', 'bbox', 'mask_offset'}
+        self.tracking_enabled = {1: False, 2: False, 3: False}
+        self.selecting_bbox = False
+        self.bbox_start = None
+        self.bbox_current = None
+        self.bboxconfirmed = {1: False, 2: False, 3: False}
+    
+    def start_selection(self, step):
+        """Start bounding box selection for given step"""
+        self.selecting_bbox = True
+        self.current_step_tracking = step
+        self.bbox_start = None
+        self.bbox_current = None
+    
+    def cancel_selection(self):
+        self.selecting_bbox = False
+        self.bbox_start = None
+        self.bbox_current = None
+    
+    def set_bbox(self, bbox, frame, step, mask):
+        """Initialize tracker with bounding box"""
+        # Use CSRT tracker (good accuracy)
+        tracker = cv2.TrackerCSRT_create()
+        tracker.init(frame, bbox)
+        
+        self.trackers[step] = {
+            'tracker': tracker,
+            'bbox': bbox,
+            'mask': mask.copy(),
+            'mask_center': self._get_mask_center(mask),
+            'original_bbox': bbox
+        }
+        self.tracking_enabled[step] = True
+        self.bboxconfirmed[step] = True
+        self.selecting_bbox = False
+    
+    def _get_mask_center(self, mask):
+        """Get center of mass of mask"""
+        coords = np.where(mask > 0)
+        if len(coords[0]) == 0:
+            return (0, 0)
+        return (int(np.mean(coords[1])), int(np.mean(coords[0])))
+    
+    def update_tracker(self, frame, step):
+        """Update tracker position and return new bbox"""
+        if step not in self.trackers:
+            return None
+        
+        success, bbox = self.trackers[step]['tracker'].update(frame)
+        if success:
+            self.trackers[step]['bbox'] = bbox
+            return bbox
+        return None
+    
+    def get_shifted_mask(self, frame, step, original_mask_shape):
+        """Get mask shifted to current tracked position"""
+        if not self.tracking_enabled.get(step, False) or step not in self.trackers:
+            return None
+        
+        # Get current bbox
+        bbox = self.update_tracker(frame, step)
+        if bbox is None:
+            return self.trackers[step]['mask']
+        
+        # Calculate shift from original position
+        orig_bbox = self.trackers[step]['original_bbox']
+        x, y, w, h = [int(v) for v in bbox]
+        ox, oy, ow, oh = [int(v) for v in orig_bbox]
+        
+        # Calculate center shift
+        shift_x = (x + w//2) - (ox + ow//2)
+        shift_y = (y + h//2) - (oy + oh//2)
+        
+        # Create translation matrix
+        M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+        
+        # Shift the mask
+        shifted = cv2.warpAffine(self.trackers[step]['mask'], M, 
+                                  (original_mask_shape[1], original_mask_shape[0]))
+        
+        return shifted
+    
+    def draw_bbox(self, canvas, step, color=None):
+        """Draw tracking bounding box on canvas"""
+        if step not in self.trackers or not self.bboxconfirmed.get(step, False):
+            return
+        
+        bbox = self.trackers[step].get('bbox', self.trackers[step].get('original_bbox'))
+        if bbox is None:
+            return
+        
+        x, y, w, h = [int(v) for v in bbox]
+        c = color or Y2KColors.TRACK_COLOR
+        
+        # Draw rectangle
+        cv2.rectangle(canvas, (x, y), (x+w, y+h), c, 2)
+        
+        # Draw corners (bracket style)
+        corner_len = min(20, w//4, h//4)
+        # Top-left
+        cv2.line(canvas, (x, y), (x+corner_len, y), c, 3)
+        cv2.line(canvas, (x, y), (x, y+corner_len), c, 3)
+        # Top-right
+        cv2.line(canvas, (x+w, y), (x+w-corner_len, y), c, 3)
+        cv2.line(canvas, (x+w, y), (x+w, y+corner_len), c, 3)
+        # Bottom-left
+        cv2.line(canvas, (x, y+h), (x+corner_len, y+h), c, 3)
+        cv2.line(canvas, (x, y+h), (x, y+h-corner_len), c, 3)
+        # Bottom-right
+        cv2.line(canvas, (x+w, y+h), (x+w-corner_len, y+h), c, 3)
+        cv2.line(canvas, (x+w, y+h), (x+w, y+h-corner_len), c, 3)
+        
+        # Label
+        label = f"TRACKING"
+        cv2.putText(canvas, label, (x, y-8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 2)
 
 
 # ============================================================================
@@ -155,7 +259,7 @@ class Y2KZonesApp:
             raise ValueError("Cannot read first frame")
         self.original_frame = self.current_frame.copy()
         
-        self.panel_width = 320
+        self.panel_width = 360  # Slightly wider for tracking options
         self.canvas_width = self.frame_width + self.panel_width
         self.canvas_height = max(self.frame_height, 800)
         self.canvas = np.zeros((self.canvas_height, self.canvas_width, 3), dtype=np.uint8)
@@ -170,6 +274,10 @@ class Y2KZonesApp:
         self.mask_glass = np.zeros((self.frame_height, self.frame_width), dtype=np.uint8)
         
         self.current_step = 1
+        
+        # NEW: Tracker manager
+        self.tracker_mgr = TrackerManager()
+        
         self._init_step_ui()
         self.window_name = "Y2K Zones Editor"
 
@@ -177,51 +285,130 @@ class Y2KZonesApp:
         px = self.frame_width + 20
         if self.current_step == 1:
             self.toggle_blur = Button(px, 80, 120, 35, "Blur", toggle=True)
-            self.slider_blur_strength = Slider(px, 140, 280, 1, 100, 30, "Strength")
-            colors = [("None", None), ("Pink", Y2KColors.FILTER_PINK), ("Lilac", Y2KColors.FILTER_LILAC), ("Mint", Y2KColors.MINT), ("Custom", Y2KColors.PINK_HOT)]
-            self.swatch_blur_color = [ColorSwatch(px + (i % 3) * 90, 190 + (i // 3) * 60, 40, c or (100, 100, 100), l, i == 0) for i, (l, c) in enumerate(colors)]
+            self.slider_blur_strength = Slider(px, 140, 320, 1, 100, 30, "Strength")
+            
+            # NEW: Track vs Static toggle
+            self.btn_track_blur = Button(px, 185, 150, 32, "Track Object")
+            self.btn_static_blur = Button(px+160, 185, 140, 32, "Static Position", toggle=True)
+            self.btn_static_blur.state = True
+            
+            colors = [("None", None), ("Pink", Y2KColors.FILTER_PINK), ("Lilac", Y2KColors.FILTER_LILAC), ("Mint", Y2KColors.MINT)]
+            self.swatch_blur_color = [ColorSwatch(px+(i%4)*78, 230, 36, c or (100,100,100), l, i==0) for i,(l,c) in enumerate(colors)]
             self.selected_blur_color = None
+            
         elif self.current_step == 2:
             self.toggle_glitter = Button(px, 80, 120, 35, "Glitter", toggle=True)
-            self.slider_glitter_density = Slider(px, 140, 280, 1, 100, 50, "Density")
-            self.slider_glitter_glow = Slider(px, 200, 280, 1, 100, 60, "Glow")
-            colors = [("White", (255, 255, 255)), ("Pink", Y2KColors.PINK_HOT), ("Gold", Y2KColors.GOLD), ("Rainbow", None)]
-            self.swatch_glitter_color = [ColorSwatch(px + i * 70, 260, 40, c or (200, 200, 200), l, i == 0) for i, (l, c) in enumerate(colors)]
+            self.slider_glitter_density = Slider(px, 140, 320, 1, 100, 50, "Density")
+            self.slider_glitter_glow = Slider(px, 200, 320, 1, 100, 60, "Glow")
+            
+            # NEW: Track vs Static
+            self.btn_track_glitter = Button(px, 250, 150, 32, "Track Object")
+            self.btn_static_glitter = Button(px+160, 250, 140, 32, "Static Position", toggle=True)
+            self.btn_static_glitter.state = True
+            
+            colors = [("White",(255,255,255)),("Pink",Y2KColors.PINK_HOT),("Gold",Y2KColors.GOLD),("Rainbow",None)]
+            self.swatch_glitter_color = [ColorSwatch(px+i*78, 295, 36, c or (200,200,200), l, i==0) for i,(l,c) in enumerate(colors)]
             self.selected_glitter_color = colors[0][1]
+            
         elif self.current_step == 3:
             self.toggle_glass = Button(px, 80, 120, 35, "Glass", toggle=True)
-            self.slider_glass_strength = Slider(px, 140, 280, 1, 100, 50, "Strength")
-            self.slider_glass_transparency = Slider(px, 200, 280, 0, 100, 60, "Transparency")
+            self.slider_glass_strength = Slider(px, 140, 320, 1, 100, 50, "Strength")
+            self.slider_glass_transparency = Slider(px, 200, 320, 0, 100, 60, "Transparency")
+            
+            # NEW: Track vs Static
+            self.btn_track_glass = Button(px, 250, 150, 32, "Track Object")
+            self.btn_static_glass = Button(px+160, 250, 140, 32, "Static Position", toggle=True)
+            self.btn_static_glass.state = True
+            
         elif self.current_step == 4:
             self.toggle_dust = Button(px, 80, 120, 35, "Dust", toggle=True)
-            self.slider_dust_intensity = Slider(px, 140, 280, 0, 100, 40, "Intensity")
+            self.slider_dust_intensity = Slider(px, 140, 320, 0, 100, 40, "Intensity")
         elif self.current_step == 5:
-            opts = [("None", None), ("Pink", Y2KColors.FILTER_PINK), ("Lilac", Y2KColors.FILTER_LILAC), ("Emerald", Y2KColors.FILTER_EMERALD), ("Cyan", Y2KColors.FILTER_CYAN), ("Gold", Y2KColors.FILTER_WARM_GOLD), ("Custom", Y2KColors.PINK_HOT)]
-            self.swatch_filter_color = [ColorSwatch(px + (i % 4) * 70, 100 + (i // 4) * 60, 40, c or (100, 100, 100), l, i == 0) for i, (l, c) in enumerate(opts)]
+            opts = [("None",None),("Pink",Y2KColors.FILTER_PINK),("Lilac",Y2KColors.FILTER_LILAC),("Emerald",Y2KColors.FILTER_EMERALD),("Cyan",Y2KColors.FILTER_CYAN),("Gold",Y2KColors.FILTER_WARM_GOLD),("Custom",Y2KColors.PINK_HOT)]
+            self.swatch_filter_color = [ColorSwatch(px+(i%4)*78, 100+(i//4)*55, 36, c or (100,100,100), l, i==0) for i,(l,c) in enumerate(opts)]
             self.selected_filter_color = None
-            self.slider_filter_intensity = Slider(px, 230, 280, 0, 100, 50, "Intensity")
+            self.slider_filter_intensity = Slider(px, 220, 320, 0, 100, 50, "Intensity")
 
     def _draw_panel(self):
         self.canvas[:, self.frame_width:] = Y2KColors.PANEL_BG
-        titles = {1: "Blur Zone", 2: "Glitter Zone", 3: "Glass Zone", 4: "Vintage Dust", 5: "Color Filter"}
-        cv2.putText(self.canvas, f"Step {self.current_step}/5", (self.frame_width + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, Y2KColors.ACCENT, 2)
-        cv2.putText(self.canvas, titles[self.current_step], (self.frame_width + 20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.55, Y2KColors.TEXT_PRIMARY, 1)
-        {"1": lambda: (self.toggle_blur.draw(self.canvas), self.toggle_blur.state and (self.slider_blur_strength.draw(self.canvas), [s.draw(self.canvas) for s in self.swatch_blur_color])),
-         "2": lambda: (self.toggle_glitter.draw(self.canvas), self.toggle_glitter.state and (self.slider_glitter_density.draw(self.canvas), self.slider_glitter_glow.draw(self.canvas), [s.draw(self.canvas) for s in self.swatch_glitter_color])),
-         "3": lambda: (self.toggle_glass.draw(self.canvas), self.toggle_glass.state and (self.slider_glass_strength.draw(self.canvas), self.slider_glass_transparency.draw(self.canvas))),
-         "4": lambda: (self.toggle_dust.draw(self.canvas), self.toggle_dust.state and self.slider_dust_intensity.draw(self.canvas)),
-         "5": lambda: ([s.draw(self.canvas) for s in self.swatch_filter_color], self.slider_filter_intensity.draw(self.canvas))}.get(str(self.current_step), lambda: None)()
-        for i, line in enumerate(["Controls:", "• Left-click + drag: Paint mask", "• Scroll wheel: Brush size", "• Enter: Next step", "• ESC: Exit"]):
-            cv2.putText(self.canvas, line, (self.frame_width + 20, self.canvas_height - 120 + i * 22), cv2.FONT_HERSHEY_SIMPLEX, 0.4, Y2KColors.ACCENT if i == 0 else Y2KColors.TEXT_SECONDARY, 1)
-        cv2.putText(self.canvas, f"Brush: {self.brush_size}px", (self.frame_width + 20, self.canvas_height - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.4, Y2KColors.TEXT_PRIMARY, 1)
+        titles = {1:"Blur Zone", 2:"Glitter Zone", 3:"Glass Zone", 4:"Vintage Dust", 5:"Color Filter"}
+        cv2.putText(self.canvas, f"Step {self.current_step}/5", (self.frame_width+20,40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, Y2KColors.ACCENT, 2)
+        cv2.putText(self.canvas, titles[self.current_step], (self.frame_width+20,65), cv2.FONT_HERSHEY_SIMPLEX, 0.55, Y2KColors.TEXT_PRIMARY, 1)
+        
+        if self.current_step == 1:
+            self.toggle_blur.draw(self.canvas)
+            if self.toggle_blur.state:
+                self.slider_blur_strength.draw(self.canvas)
+                self.btn_track_blur.draw(self.canvas)
+                self.btn_static_blur.draw(self.canvas)
+                [s.draw(self.canvas) for s in self.swatch_blur_color]
+                # Show tracking status
+                if self.tracker_mgr.tracking_enabled[1]:
+                    cv2.putText(self.canvas, "✓ Tracking ON", (self.frame_width+20, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.45, Y2KColors.TRACK_COLOR, 1)
+                elif self.btn_static_blur.state:
+                    cv2.putText(self.canvas, "○ Static mode", (self.frame_width+20, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.45, Y2KColors.STATIC_COLOR, 1)
+                    
+        elif self.current_step == 2:
+            self.toggle_glitter.draw(self.canvas)
+            if self.toggle_glitter.state:
+                self.slider_glitter_density.draw(self.canvas)
+                self.slider_glitter_glow.draw(self.canvas)
+                self.btn_track_glitter.draw(self.canvas)
+                self.btn_static_glitter.draw(self.canvas)
+                [s.draw(self.canvas) for s in self.swatch_glitter_color]
+                if self.tracker_mgr.tracking_enabled[2]:
+                    cv2.putText(self.canvas, "✓ Tracking ON", (self.frame_width+20, 345), cv2.FONT_HERSHEY_SIMPLEX, 0.45, Y2KColors.TRACK_COLOR, 1)
+                    
+        elif self.current_step == 3:
+            self.toggle_glass.draw(self.canvas)
+            if self.toggle_glass.state:
+                self.slider_glass_strength.draw(self.canvas)
+                self.slider_glass_transparency.draw(self.canvas)
+                self.btn_track_glass.draw(self.canvas)
+                self.btn_static_glass.draw(self.canvas)
+                if self.tracker_mgr.tracking_enabled[3]:
+                    cv2.putText(self.canvas, "✓ Tracking ON", (self.frame_width+20, 295), cv2.FONT_HERSHEY_SIMPLEX, 0.45, Y2KColors.TRACK_COLOR, 1)
+                    
+        elif self.current_step == 4:
+            self.toggle_dust.draw(self.canvas)
+            if self.toggle_dust.state:
+                self.slider_dust_intensity.draw(self.canvas)
+        elif self.current_step == 5:
+            [s.draw(self.canvas) for s in self.swatch_filter_color]
+            self.slider_filter_intensity.draw(self.canvas)
+        
+        # Instructions
+        instr = ["Controls:", "• Click+drag: Paint mask", "• Scroll: Brush size",
+                 "• Track: Draw box around object", "• Enter: Next step", "• ESC: Exit"]
+        if self.tracker_mgr.selecting_bbox:
+            instr.insert(3, "▸ Drawing tracking box...")
+        for i, line in enumerate(instr):
+            c = Y2KColors.ACCENT if i==0 else (Y2KColors.TRACK_COLOR if 'track' in line.lower() or 'box' in line.lower() else Y2KColors.TEXT_SECONDARY)
+            cv2.putText(self.canvas, line, (self.frame_width+20, self.canvas_height-130+i*22), cv2.FONT_HERSHEY_SIMPLEX, 0.38, c, 1)
+        cv2.putText(self.canvas, f"Brush: {self.brush_size}px", (self.frame_width+20, self.canvas_height-12), cv2.FONT_HERSHEY_SIMPLEX, 0.4, Y2KColors.TEXT_PRIMARY, 1)
 
     def _render(self):
         disp = self.current_frame.copy()
+        
+        # Show masks with different colors based on tracking status
         if self.current_step in [1, 2, 3]:
-            m = {1: self.mask_blur, 2: self.mask_glitter, 3: self.mask_glass}[self.current_step]
+            m = {1:self.mask_blur, 2:self.mask_glitter, 3:self.mask_glass}[self.current_step]
             ov = disp.copy()
-            ov[m > 0] = [0, 0, 255]
+            mask_color = [0, 255, 0] if self.tracker_mgr.tracking_enabled[self.current_step] else [0, 0, 255]
+            ov[m > 0] = mask_color
             disp = cv2.addWeighted(disp, 0.7, ov, 0.3, 0)
+            
+            # Draw tracking bbox if active
+            if self.tracker_mgr.tracking_enabled.get(self.current_step, False):
+                self.tracker_mgr.draw_bbox(disp, self.current_step)
+        
+        # Draw selection rectangle if selecting
+        if self.tracker_mgr.selecting_bbox and self.tracker_mgr.bbox_start and self.tracker_mgr.bbox_current:
+            sx, sy = self.tracker_mgr.bbox_start
+            ex, ey = self.tracker_mgr.bbox_current
+            cv2.rectangle(disp, (sx, sy), (ex, ey), Y2KColors.TRACK_COLOR, 2)
+            cv2.putText(disp, "TRACKING BOX", (sx, sy-8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, Y2KColors.TRACK_COLOR, 2)
+        
         self.canvas[:self.frame_height, :self.frame_width] = disp
         self._draw_panel()
         cv2.imshow(self.window_name, self.canvas)
@@ -234,127 +421,207 @@ class Y2KZonesApp:
 
     def _mouse_callback(self, event, x, y, flags, param):
         over_vid = 0 <= x < self.frame_width and 0 <= y < self.frame_height
+        
+        # Handle bbox selection mode
+        if self.tracker_mgr.selecting_bbox and over_vid:
+            if event == cv2.EVENT_LBUTTONDOWN:
+                self.tracker_mgr.bbox_start = (x, y)
+                self.tracker_mgr.bbox_current = (x, y)
+            elif event == cv2.EVENT_MOUSEMOVE and self.tracker_mgr.bbox_start:
+                self.tracker_mgr.bbox_current = (x, y)
+            elif event == cv2.EVENT_LBUTTONUP and self.tracker_mgr.bbox_start and self.tracker_mgr.bbox_current:
+                sx, sy = self.tracker_mgr.bbox_start
+                ex, ey = self.tracker_mgr.bbox_current
+                bbox = (min(sx,ex), min(sy,ey), abs(ex-sx), abs(ey-sy))
+                if bbox[2] > 10 and bbox[3] > 10:  # Minimum size
+                    step = self.tracker_mgr.current_step_tracking
+                    mask = {1:self.mask_blur, 2:self.mask_glitter, 3:self.mask_glass}[step]
+                    self.tracker_mgr.set_bbox(bbox, self.current_frame, step, mask)
+                    print(f"  ✓ Tracking enabled for Step {step} - object will be followed!")
+                self.tracker_mgr.cancel_selection()
+            return
+        
         if event == cv2.EVENT_MOUSEMOVE:
-            if self.drawing and over_vid:
-                {1: self.mask_blur, 2: self.mask_glitter, 3: self.mask_glass}.get(self.current_step, None) and self._paint_mask((x, y), {1: self.mask_blur, 2: self.mask_glitter, 3: self.mask_glass}[self.current_step])
-            # Update hover states...
+            if self.drawing and over_vid and self.current_step in [1,2,3]:
+                self._paint_mask((x,y), {1:self.mask_blur,2:self.mask_glitter,3:self.mask_glass}[self.current_step])
         elif event == cv2.EVENT_LBUTTONDOWN:
-            if over_vid:
-                self.drawing, self.last_point = True, (x, y)
-                if self.current_step in [1, 2, 3]:
-                    self._paint_mask((x, y), {1: self.mask_blur, 2: self.mask_glitter, 3: self.mask_glass}[self.current_step])
+            if over_vid and self.current_step in [1,2,3]:
+                self.drawing, self.last_point = True, (x,y)
+                self._paint_mask((x,y), {1:self.mask_blur,2:self.mask_glitter,3:self.mask_glass}[self.current_step])
             else:
                 self._handle_click(x, y)
         elif event == cv2.EVENT_LBUTTONUP:
             self.drawing, self.last_point = False, None
         elif event == cv2.EVENT_MOUSEWHEEL:
-            self.brush_size = min(100, self.brush_size + 2) if flags > 0 else max(5, self.brush_size - 2)
+            self.brush_size = min(100, self.brush_size+2) if flags>0 else max(5, self.brush_size-2)
 
     def _handle_click(self, x, y):
-        if self.current_step == 1 and self.toggle_blur.contains(x, y):
-            self.toggle_blur.state ^= True
-        elif self.current_step == 2 and self.toggle_glitter.contains(x, y):
-            self.toggle_glitter.state ^= True
-        elif self.current_step == 3 and self.toggle_glass.contains(x, y):
-            self.toggle_glass.state ^= True
-        elif self.current_step == 4 and self.toggle_dust.contains(x, y):
-            self.toggle_dust.state ^= True
+        # Handle Track/Static buttons
+        if self.current_step == 1:
+            if self.toggle_blur.contains(x, y): self.toggle_blur.state ^= True; return
+            if hasattr(self, 'btn_track_blur') and self.btn_track_blur.contains(x, y):
+                if np.sum(self.mask_blur) > 0:
+                    self.tracker_mgr.start_selection(1)
+                    self.btn_static_blur.state = False
+                    print("\n  ▸ Draw a rectangle around the object to track...")
+                else:
+                    print("  ⚠ Paint a mask area first!")
+                return
+            if hasattr(self, 'btn_static_blur') and self.btn_static_blur.contains(x, y):
+                self.btn_static_blur.state = True
+                self.tracker_mgr.tracking_enabled[1] = False
+                if 1 in self.tracker_mgr.trackers: del self.tracker_mgr.trackers[1]
+                return
+                
+        elif self.current_step == 2:
+            if self.toggle_glitter.contains(x, y): self.toggle_glitter.state ^= True; return
+            if hasattr(self, 'btn_track_glitter') and self.btn_track_glitter.contains(x, y):
+                if np.sum(self.mask_glitter) > 0:
+                    self.tracker_mgr.start_selection(2)
+                    self.btn_static_glitter.state = False
+                    print("\n  ▸ Draw a rectangle around the object to track...")
+                else:
+                    print("  ⚠ Paint a mask area first!")
+                return
+            if hasattr(self, 'btn_static_glitter') and self.btn_static_glitter.contains(x, y):
+                self.btn_static_glitter.state = True
+                self.tracker_mgr.tracking_enabled[2] = False
+                if 2 in self.tracker_mgr.trackers: del self.tracker_mgr.trackers[2]
+                return
+                
+        elif self.current_step == 3:
+            if self.toggle_glass.contains(x, y): self.toggle_glass.state ^= True; return
+            if hasattr(self, 'btn_track_glass') and self.btn_track_glass.contains(x, y):
+                if np.sum(self.mask_glass) > 0:
+                    self.tracker_mgr.start_selection(3)
+                    self.btn_static_glass.state = False
+                    print("\n  ▸ Draw a rectangle around the object to track...")
+                else:
+                    print("  ⚠ Paint a mask area first!")
+                return
+            if hasattr(self, 'btn_static_glass') and self.btn_static_glass.contains(x, y):
+                self.btn_static_glass.state = True
+                self.tracker_mgr.tracking_enabled[3] = False
+                if 3 in self.tracker_mgr.trackers: del self.tracker_mgr.trackers[3]
+                return
+        elif self.current_step == 4:
+            if self.toggle_dust.contains(x, y): self.toggle_dust.state ^= True; return
+        
         # Handle swatches...
+        # (swatch handling code here - same as before but omitted for brevity)
 
     # =========================================================================
-    # EFFECT PROCESSING
+    # EFFECT PROCESSING (with tracking support)
     # =========================================================================
 
     def _apply_blur(self, frame, idx):
-        if not getattr(self, 'toggle_blur', type('obj', (object,), {'state': False})()) or np.sum(self.mask_blur) == 0:
+        if not getattr(self, 'toggle_blur', type('o',(object,),{'state':False})()) or np.sum(self.mask_blur)==0:
             return frame
-        k = int(3 + self.slider_blur_strength.value / 100 * 29)
-        if k % 2 == 0: k += 1
-        blurred = cv2.GaussianBlur(frame, (k, k), 0)
+        k = int(3 + self.slider_blur_strength.value/100*29)
+        if k%2==0: k+=1
+        blurred = cv2.GaussianBlur(frame, (k,k), 0)
         if self.selected_blur_color:
-            tint = np.zeros_like(frame); tint[:] = self.selected_blur_color
-            blurred = cv2.addWeighted(blurred, 0.7, tint, 0.3, 0)
-        m3 = cv2.merge([self.mask_blur]*3)
-        return np.where(m3 > 0, blurred, frame)
+            t=np.zeros_like(frame); t[:]=self.selected_blur_color
+            blurred=cv2.addWeighted(blurred,0.7,t,0.3,0)
+        
+        # Use tracked mask or static mask
+        if self.tracker_mgr.tracking_enabled.get(1, False):
+            mask = self.tracker_mgr.get_shifted_mask(frame, 1, frame.shape[:2])
+            if mask is None: mask = self.mask_blur
+        else:
+            mask = self.mask_blur
+        
+        m3=cv2.merge([mask]*3)
+        return np.where(m3>0, blurred, frame)
 
     def _apply_glitter(self, frame, idx):
-        if not getattr(self, 'toggle_glitter', type('obj', (object,), {'state': False})()) or np.sum(self.mask_glitter) == 0:
+        if not getattr(self,'toggle_glitter',type('o',(object,),{'state':False})()) or np.sum(self.mask_glitter)==0:
             return frame
-        res = frame.copy()
-        dens = self.slider_glitter_density.value / 100.0
-        glow = self.slider_glitter_glow.value / 100.0
-        n_pts = int(np.sum(self.mask_glitter > 0) * dens * GlitterConfig.DENSITY_LEVELS['high'])
-        coords = np.where(self.mask_glitter > 0)
-        if len(coords[0]) == 0: return frame
-        random.seed(idx * 42 + 12345)
+        res=frame.copy()
+        dens=self.slider_glitter_density.value/100.0
+        glow=self.slider_glitter_glow.value/100.0
+        
+        # Use tracked mask
+        if self.tracker_mgr.tracking_enabled.get(2, False):
+            mask = self.tracker_mgr.get_shifted_mask(frame, 2, frame.shape[:2])
+            if mask is None: mask = self.mask_glitter
+        else:
+            mask = self.mask_glitter
+        
+        n_pts=int(np.sum(mask>0)*dens*GlitterConfig.DENSITY_LEVELS['high'])
+        coords=np.where(mask>0)
+        if len(coords[0])==0: return frame
+        random.seed(idx*42+12345)
         for _ in range(n_pts):
-            ri = random.randint(0, len(coords[0]) - 1)
-            cy, cx = coords[0][ri], coords[1][ri]
-            sz = random.randint(GlitterConfig.MIN_SIZE, GlitterConfig.MAX_SIZE)
-            tw = random.random()
-            br = random.uniform(0.7, 1.0) if tw > (1 - GlitterConfig.TWINKLE_SPEED * 3) else random.uniform(0.1, 0.4)
-            color = list(cv2.cvtColor(np.uint8([[[random.randint(0,180), 255, 255]]]), cv2.COLOR_HSV2BGR)[0][0]) if self.selected_glitter_color is None else list(self.selected_glitter_color)
-            br *= (0.5 + glow * 0.5)
-            if GlitterConfig.STAR_BURST_ENABLED and sz >= 2 and br > 0.6:
-                rl = int(sz * GlitterConfig.STAR_BURST_LENGTH)
-                rc = [min(255, int(c * br * 1.2)) for c in color]
-                cv2.line(res, (cx-rl, cy), (cx+rl, cy), rc, 1); cv2.line(res, (cx, cy-rl), (cx, cy+rl), rc, 1)
-                dl = rl // 2
-                cv2.line(res, (cx-dl, cy-dl), (cx+dl, cy+dl), rc, 1); cv2.line(res, (cx+dl, cy-dl), (cx-dl, cy+dl), rc, 1)
-            cv2.circle(res, (cx, cy), sz, [min(255, int(c * br)) for c in color], -1)
-            if glow > 0.3 and sz >= 2:
-                cv2.circle(res, (cx, cy), sz*2, [min(255, int(c * br * 0.3)) for c in color], 1)
+            ri=random.randint(0,len(coords[0])-1)
+            cy,cx=coords[0][ri],coords[1][ri]
+            sz=random.randint(GlitterConfig.MIN_SIZE, GlitterConfig.MAX_SIZE)
+            tw=random.random()
+            br=random.uniform(0.7,1.0) if tw>(1-GlitterConfig.TWINKLE_SPEED*3) else random.uniform(0.1,0.4)
+            color=list(cv2.cvtColor(np.uint8([[[random.randint(0,180),255,255]]]),cv2.COLOR_HSV2BGR)[0][0]) if self.selected_glitter_color is None else list(self.selected_glitter_color)
+            br*=(0.5+glow*0.5)
+            if GlitterConfig.STAR_BURST_ENABLED and sz>=2 and br>0.6:
+                rl=int(sz*GlitterConfig.STAR_BURST_LENGTH); rc=[min(255,int(c*br*1.2)) for c in color]
+                cv2.line(res,(cx-rl,cy),(cx+rl,cy),rc,1); cv2.line(res,(cx,cy-rl),(cx,cy+rl),rc,1)
+                dl=rl//2
+                cv2.line(res,(cx-dl,cy-dl),(cx+dl,cy+dl),rc,1); cv2.line(res,(cx+dl,cy-dl),(cx-dl,cy+dl),rc,1)
+            cv2.circle(res,(cx,cy),sz,[min(255,int(c*br)) for c in color],-1)
+            if glow>0.3 and sz>=2: cv2.circle(res,(cx,cy),sz*2,[min(255,int(c*br*0.3)) for c in color],1)
         return res
 
     def _apply_glass(self, frame, idx):
-        if not getattr(self, 'toggle_glass', type('obj', (object,), {'state': False})()) or np.sum(self.mask_glass) == 0:
+        if not getattr(self,'toggle_glass',type('o',(object,),{'state':False})()) or np.sum(self.mask_glass)==0:
             return frame
-        str_ = self.slider_glass_strength.value / 100.0
-        trans = self.slider_glass_transparency.value / 100.0
-        k = int(GlassConfig.BLUR_KERNEL_BASE + str_ * (GlassConfig.BLUR_KERNEL_MAX - GlassConfig.BLUR_KERNEL_BASE))
-        if k % 2 == 0: k += 1
-        blurred = cv2.GaussianBlur(frame, (k, k), 0)
-        noise = np.clip(blurred.astype(np.int16) + np.random.normal(0, 10 * str_, blurred.shape).astype(np.int16), 0, 255).astype(np.uint8)
-        if str_ > 0.2:
-            edges = cv2.dilate(cv2.Canny(self.mask_glass, 100, 200), np.ones((3,3), np.uint8))
-            hl = np.zeros_like(frame); hl[edges > 0] = GlassConfig.EDGE_HIGHLIGHT_COLOR
-            blurred = cv2.addWeighted(blurred, 1 - GlassConfig.EDGE_HIGHLIGHT_STRENGTH * str_, hl, GlassConfig.EDGE_HIGHLIGHT_STRENGTH * str_, 0)
-        alpha = trans * (1 - GlassConfig.TRANSPARENCY_MIN) + GlassConfig.TRANSPARENCY_MIN
-        gr = cv2.addWeighted(frame, 1 - alpha, blurred, alpha, 0)
-        m3 = cv2.merge([self.mask_glass]*3)
-        return np.where(m3 > 0, gr, frame)
+        str_=self.slider_glass_strength.value/100.0
+        trans=self.slider_glass_transparency.value/100.0
+        k=int(GlassConfig.BLUR_KERNEL_BASE+str_*(GlassConfig.BLUR_KERNEL_MAX-GlassConfig.BLUR_KERNEL_BASE))
+        if k%2==0: k+=1
+        blurred=cv2.GaussianBlur(frame,(k,k),0)
+        noise=np.clip(blurred.astype(np.int16)+np.random.normal(0,10*str_,blurred.shape).astype(np.int16),0,255).astype(np.uint8)
+        if str_>0.2:
+            edges=cv2.dilate(cv2.Canny(self.mask_glass,100,200),np.ones((3,3),np.uint8))
+            hl=np.zeros_like(frame); hl[edges>0]=GlassConfig.EDGE_HIGHLIGHT_COLOR
+            blurred=cv2.addWeighted(blurred,1-GlassConfig.EDGE_HIGHLIGHT_STRENGTH*str_,hl,GlassConfig.EDGE_HIGHLIGHT_STRENGTH*str_,0)
+        alpha=trans*(1-GlassConfig.TRANSPARENCY_MIN)+GlassConfig.TRANSPARENCY_MIN
+        gr=cv2.addWeighted(frame,1-alpha,blurred,alpha,0)
+        
+        # Use tracked mask
+        if self.tracker_mgr.tracking_enabled.get(3, False):
+            mask = self.tracker_mgr.get_shifted_mask(frame, 3, frame.shape[:2])
+            if mask is None: mask = self.mask_glass
+        else:
+            mask = self.mask_glass
+        
+        m3=cv2.merge([mask]*3)
+        return np.where(m3>0, gr, frame)
 
     def _apply_dust(self, frame, idx):
-        if not getattr(self, 'toggle_dust', type('obj', (object,), {'state': False})()):
-            return frame
-        intens = self.slider_dust_intensity.value / 100.0
-        res = frame.copy().astype(np.float32)
-        if intens > 0:
-            res += np.random.normal(0, DustConfig.GRAIN_INTENSITY_BASE * intens * 255, frame.shape)
-        if intens > 0.2:
-            da = DustConfig.DESATURATION_MAX * intens
-            g3 = cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR).astype(np.float32)
-            res = res * (1 - da) + g3 * da
-        if intens > 0.1:
-            h, w = frame.shape[:2]
-            X, Y = np.meshgrid(np.linspace(-1, 1, w), np.linspace(-1, 1, h))
-            vig = 1 - np.clip(np.sqrt(X**2 + Y**2) / DustConfig.VIGNETTE_RADIUS_RATIO, 0, 1) * DustConfig.VIGNETTE_STRENGTH_MAX * intens
-            res *= np.stack([vig]*3, axis=2)
-        if intens > 0.1:
-            res[:,:,2] *= (1 + DustConfig.WARM_SHIFT * intens); res[:,:,1] *= (1 + DustConfig.WARM_SHIFT * intens * 0.5)
-        return np.clip(res, 0, 255).astype(np.uint8)
+        if not getattr(self,'toggle_dust',type('o',(object,),{'state':False})()): return frame
+        intens=self.slider_dust_intensity.value/100.0
+        res=frame.copy().astype(np.float32)
+        if intens>0: res+=np.random.normal(0,DustConfig.GRAIN_INTENSITY_BASE*intens*255,frame.shape)
+        if intens>0.2:
+            da=DustConfig.DESATURATION_MAX*intens
+            g3=cv2.cvtColor(cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY),cv2.COLOR_GRAY2BGR).astype(np.float32)
+            res=res*(1-da)+g3*da
+        if intens>0.1:
+            h,w=frame.shape[:2]; X,Y=np.meshgrid(np.linspace(-1,1,w),np.linspace(-1,1,h))
+            vig=1-np.clip(np.sqrt(X**2+Y**2)/DustConfig.VIGNETTE_RADIUS_RATIO,0,1)*DustConfig.VIGNETTE_STRENGTH_MAX*intens
+            res*=np.stack([vig]*3,axis=2)
+        if intens>0.1: res[:,:,2]*=(1+DustConfig.WARM_SHIFT*intens); res[:,:,1]*=(1+DustConfig.WARM_SHIFT*intens*0.5)
+        return np.clip(res,0,255).astype(np.uint8)
 
     def _apply_color(self, frame, idx):
         if self.selected_filter_color is None: return frame
-        intens = self.slider_filter_intensity.value / 100.0
-        if intens == 0: return frame
-        ov = np.zeros_like(frame, dtype=np.float32); ov[:] = self.selected_filter_color
-        return np.clip(frame.astype(np.float32) * (1 - intens * 0.5) + ov * intens * 0.5, 0, 255).astype(np.uint8)
+        intens=self.slider_filter_intensity.value/100.0
+        if intens==0: return frame
+        ov=np.zeros_like(frame,dtype=np.float32); ov[:]=self.selected_filter_color
+        return np.clip(frame.astype(np.float32)*(1-intens*0.5)+ov*intens*0.5,0,255).astype(np.uint8)
 
     def _process_frame(self, frame, idx):
-        r = frame.copy()
-        r = self._apply_blur(r, idx); r = self._apply_glitter(r, idx); r = self._apply_glass(r, idx)
-        r = self._apply_dust(r, idx); r = self._apply_color(r, idx)
+        r=frame.copy()
+        r=self._apply_blur(r,idx); r=self._apply_glitter(r,idx); r=self._apply_glass(r,idx)
+        r=self._apply_dust(r,idx); r=self._apply_color(r,idx)
         return r
 
     # =========================================================================
@@ -362,33 +629,39 @@ class Y2KZonesApp:
     # =========================================================================
 
     def process_video(self):
-        print(f"\n{'='*60}\n  Processing: {self.input_path.name}\n  Output: {self.output_path.name}\n  Frames: {self.total_frames} | FPS: {self.fps:.2f}\n{'='*60}\n")
-        out = cv2.VideoWriter(str(self.output_path), cv2.VideoWriter_fourcc(*'mp4v'), self.fps, (self.frame_width, self.frame_height))
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        print(f"\n{'='*60}\n  Processing: {self.input_path.name}\n  Output: {self.output_path.name}")
+        if any(self.tracker_mgr.tracking_enabled.values()):
+            print("  ⚡ Object tracking ENABLED - effects will follow objects!")
+        print(f"  Frames: {self.total_frames} | FPS: {self.fps:.2f}\n{'='*60}\n")
+        
+        out=cv2.VideoWriter(str(self.output_path),cv2.VideoWriter_fourcc(*'mp4v'),self.fps,(self.frame_width,self.frame_height))
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES,0)
+        
         for i in range(self.total_frames):
-            ret, fr = self.cap.read()
+            ret,fr=self.cap.read()
             if not ret: break
-            out.write(self._process_frame(fr, i))
-            prog = (i + 1) / self.total_frames * 100
-            filled = int(40 * i // self.total_frames)
+            processed=self._process_frame(fr,i)
+            out.write(processed)
+            prog=(i+1)/self.total_frames*100
+            filled=int(40*i//self.total_frames)
             sys.stdout.write(f'\r  [{"█"*filled}{"░"*(40-filled)}] {prog:5.1f}% ({i+1}/{self.total_frames})')
             sys.stdout.flush()
         out.release()
-        print(f"\n\n  ✓ Processing complete!\n  Output: {self.output_path}")
+        print(f"\n\n  ✓ Complete! Output: {self.output_path}")
         self._attach_audio()
 
     def _attach_audio(self):
         print("\n  Attaching audio...")
-        tmp = self.output_path.with_suffix('.temp.mp4')
+        tmp=self.output_path.with_suffix('.temp.mp4')
         try:
-            r = subprocess.run(['ffmpeg', '-y', '-i', str(self.output_path), '-i', str(self.input_path), '-map', '0:v', '-map', '1:a?', '-c:v', 'copy', '-c:a', 'aac', '-shortest', str(tmp)], capture_output=True, text=True)
-            if r.returncode == 0:
-                shutil.move(str(tmp), str(self.output_path)); print("  ✓ Audio attached!")
+            r=subprocess.run(['ffmpeg','-y','-i',str(self.output_path),'-i',str(self.input_path),'-map','0:v','-map','1:a?','-c:v','copy','-c:a','aac','-shortest',str(tmp)],capture_output=True,text=True)
+            if r.returncode==0:
+                shutil.move(str(tmp),str(self.output_path)); print("  ✓ Audio attached!")
             else:
-                print("  ⚠ Audio failed (video saved without audio)")
+                print("  ⚠ Audio failed"); 
                 if tmp.exists(): tmp.unlink()
         except FileNotFoundError:
-            print("  ⚠ ffmpeg not found. Install: brew install ffmpeg")
+            print("  ⚠ Install ffmpeg: brew install ffmpeg")
         except Exception as e:
             print(f"  ⚠ Error: {e}")
             if tmp.exists(): tmp.unlink()
@@ -398,37 +671,46 @@ class Y2KZonesApp:
     # =========================================================================
 
     def run_editor(self):
-        print("\n" + "="*60 + "\n  🎨 Y2K Zones - Interactive Editor\n" + "="*60)
-        print(f"\n  Input: {self.input_path.name} | {self.frame_width}x{self.frame_height} | {self.total_frames/self.fps:.1f}s")
-        print("\n  Paint areas → Adjust controls → Press Enter to continue → ESC to exit\n")
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(self.window_name, self._mouse_callback)
-        cv2.resizeWindow(self.window_name, self.canvas_width, self.canvas_height)
+        print("\n"+"="*60+"\n  🎨 Y2K Zones v1.1 - WITH OBJECT TRACKING\n"+"="*60)
+        print(f"\n  Input: {self.input_path.name} | {self.frame_width}x{self.frame_height}")
+        print("\n  NEW: Effects can now TRACK moving objects!")
+        print("  → Paint mask → Click 'Track Object' → Draw box around person\n")
+        
+        cv2.namedWindow(self.window_name,cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(self.window_name,self._mouse_callback)
+        cv2.resizeWindow(self.window_name,self.canvas_width,self.canvas_height)
+        
         while True:
             self._render()
-            key = cv2.waitKey(30) & 0xFF
-            if key == 27:
+            key=cv2.waitKey(30)&0xFF
+            if key==27:
                 print("\n  ✗ Cancelled"); break
-            elif key == 13:
-                if self.current_step < 5:
-                    print(f"\n  ✓ Step {self.current_step} done"); self.current_step += 1; self._init_step_ui(); self.drawing = self.last_point = False
+            elif key==13:
+                if self.current_step<5:
+                    # Check if user was in middle of bbox selection
+                    if self.tracker_mgr.selecting_bbox:
+                        print("  ⚠ Finish drawing tracking box or press ESC to cancel")
+                        continue
+                    
+                    track_status = "🎯 TRACKING" if self.tracker_mgr.tracking_enabled.get(self.current_step, False) else "📍 STATIC"
+                    print(f"\n  ✓ Step {self.current_step} done [{track_status}]")
+                    self.current_step+=1; self._init_step_ui(); self.drawing=self.last_point=False
                 else:
-                    print("\n  ✓ All steps done! Processing...\n"); cv2.destroyWindow(self.window_name); self.process_video(); break
+                    print("\n  ✓ All steps! Processing...\n"); cv2.destroyWindow(self.window_name); self.process_video(); break
         self.cap.release(); cv2.destroyAllWindows()
 
 
 def main():
-    p = argparse.ArgumentParser(description='Y2K Zones - Apply Y2K glam effects to video')
-    p.add_argument('input', help='Input video')
-    p.add_argument('output', nargs='?', help='Output video (default: input_y2k.mp4)')
-    args = p.parse_args()
+    p=argparse.ArgumentParser(description='Y2K Zones v1.1 - With Object Tracking')
+    p.add_argument('input',help='Input video')
+    p.add_argument('output',nargs='?',help='Output video')
+    args=p.parse_args()
     if not Path(args.input).exists():
-        print(f"Error: File not found: {args.input}", file=sys.stderr); sys.exit(1)
+        print(f"Error: {args.input} not found",file=sys.stderr); sys.exit(1)
     try:
-        Y2KZonesApp(args.input, args.output).run_editor()
+        Y2KZonesApp(args.input,args.output).run_editor()
     except Exception as e:
-        print(f"\n✗ Error: {e}", file=sys.stderr); sys.exit(1)
+        print(f"\n✗ Error: {e}",file=sys.stderr); sys.exit(1)
 
-
-if __name__ == '__main__':
+if __name__=='__main__':
     main()
